@@ -442,15 +442,6 @@ export class BrowserAutomation {
     return this.page.url();
   }
 
-  /**
-   * Get page title
-   */
-  async getPageTitle(): Promise<string> {
-    if (!this.page) {
-      throw new Error('Browser not initialized');
-    }
-    return await this.page.title();
-  }
 
   /**
    * Evaluate JavaScript in page context
