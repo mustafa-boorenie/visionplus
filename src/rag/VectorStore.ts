@@ -193,29 +193,4 @@ export class VectorStore {
     return context;
   }
 
-  /**
-   * Update index with new documentation
-   */
-  async updateDocs(newChunks: DocumentChunk[]): Promise<void> {
-    if (!this.index) {
-      throw new Error('Vector store not initialized');
-    }
-
-    for (const chunk of newChunks) {
-      const embedding = await this.createEmbedding(chunk.content);
-      await this.index.upsertItem({
-        vector: embedding,
-        metadata: {
-          id: chunk.id,
-          content: chunk.content,
-          source: chunk.metadata.source,
-          section: chunk.metadata.section,
-          type: chunk.metadata.type,
-          tags: chunk.metadata.tags.join(',')
-        }
-      });
-    }
-
-    log.info(`Updated vector store with ${newChunks.length} new chunks`);
-  }
 }

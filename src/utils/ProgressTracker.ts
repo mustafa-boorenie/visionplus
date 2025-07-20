@@ -187,13 +187,6 @@ export class ProgressTracker extends EventEmitter {
   }
 
   /**
-   * Get all events
-   */
-  getEvents(): ProgressEvent[] {
-    return this.events;
-  }
-
-  /**
    * Export progress log
    */
   async exportLog(filepath: string): Promise<void> {
