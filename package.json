@@ -1,0 +1,62 @@
+{
+  "name": "ai-playwright-scripter",
+  "version": "1.0.0",
+  "description": "Automated browser actions using Playwright with ChatGPT Vision analysis",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ai-playwright": "./dist/cli/intelligent-cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "clean": "rm -rf dist screenshots/*.png reports/*.json",
+    "example:basic": "tsx examples/basic-navigation.ts",
+    "example:form": "tsx examples/form-filling.ts",
+    "example:accessibility": "tsx examples/accessibility-check.ts",
+    "example:portal": "tsx examples/portal-automation.ts",
+    "example:intelligent": "tsx examples/intelligent-automation.ts",
+    "example:advanced": "tsx examples/advanced-automation.ts",
+    "script": "tsx scripts/run-cached-scripts.ts",
+    "test": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "postinstall": "mkdir -p screenshots reports logs scripts scripts/cache tests/generated",
+    "ai": "tsx src/cli/intelligent-cli.ts",
+    "ai:build": "npm run build && npm link",
+    "demo": "tsx demo.ts"
+  },
+  "keywords": [
+    "playwright",
+    "automation",
+    "ai",
+    "vision",
+    "openai",
+    "web-scraping",
+    "testing"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.49.0",
+    "chalk": "^4.1.2",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "fs-extra": "^11.2.0",
+    "openai": "^4.73.0",
+    "playwright": "^1.49.0",
+    "winston": "^3.17.0",
+    "vectra": "^0.9.0",
+    "js-tiktoken": "^1.0.15"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "^22.10.1",
+    "nodemon": "^3.1.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
