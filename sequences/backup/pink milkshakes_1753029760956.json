@@ -1,0 +1,47 @@
+{
+  "metadata": {
+    "id": "a000277e-7c8a-40ec-bb94-e62cd698c984",
+    "name": "pink milkshakes",
+    "description": "Interactive automation: Click on the image tab",
+    "createdAt": "2025-07-20T16:42:40.955Z",
+    "usageCount": 0,
+    "tags": [],
+    "category": "interactive",
+    "successRate": 100
+  },
+  "originalPrompt": "Click on the image tab",
+  "script": {
+    "name": "intelligent-automation",
+    "description": "Click on the image tab",
+    "url": "https://www.google.com/search?q=pink+milkshakes&sca_esv=b8cbb6e19436b965&source=hp&ei=Nxx9aL6mLoSzmtkPm-PWqA8&iflsig=AOw8s4IAAAAAaH0qR_zEpUGFyUIicM9lPVXNRknWYXHv&ved=0ahUKEwj-nce-8MuOAxWEmSYFHZuxFfUQ4dUDCBA&uact=5&oq=pink+milkshakes&gs_lp=Egdnd3Mtd2l6Ig9waW5rIG1pbGtzaGFrZXMyBRAAGIAEMgYQABgWGB4yCxAAGIAEGIYDGIoFMgsQABiABBiGAxiKBTILEAAYgAQYhgMYigUyCxAAGIAEGIYDGIoFMgsQABiABBiGAxiKBTIIEAAYgAQYogRIjwRQAFgAcAB4AJABAJgBP6ABP6oBATG4AQPIAQD4AQGYAgGgAkSYAwCSBwExoAf1BLIHATG4B0TCBwMyLTHIBwM&sclient=gws-wiz&sei=Ohx9aMrpJeazqtsPp_7o8AQ",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com/search?q=pink+milkshakes&sca_esv=b8cbb6e19436b965&source=hp&ei=Nxx9aL6mLoSzmtkPm-PWqA8&iflsig=AOw8s4IAAAAAaH0qR_zEpUGFyUIicM9lPVXNRknWYXHv&ved=0ahUKEwj-nce-8MuOAxWEmSYFHZuxFfUQ4dUDCBA&uact=5&oq=pink+milkshakes&gs_lp=Egdnd3Mtd2l6Ig9waW5rIG1pbGtzaGFrZXMyBRAAGIAEMgYQABgWGB4yCxAAGIAEGIYDGIoFMgsQABiABBiGAxiKBTILEAAYgAQYhgMYigUyCxAAGIAEGIYDGIoFMgsQABiABBiGAxiKBTIIEAAYgAQYogRIjwRQAFgAcAB4AJABAJgBP6ABP6oBATG4AQPIAQD4AQGYAgGgAkSYAwCSBwExoAf1BLIHATG4B0TCBwMyLTHIBwM&sclient=gws-wiz&sei=Ohx9aMrpJeazqtsPp_7o8AQ"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": "a[aria-label='Images']"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "a[aria-label='Images']",
+          "a[href*='/images']",
+          "a:has-text('Images')",
+          "a[role='tab']:has-text('Images')",
+          "[role='tab']:nth-of-type(2)"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-20T16:42:40.955Z",
+      "success": true,
+      "executionTime": 11889,
+      "errors": []
+    }
+  ]
+}

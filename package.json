@@ -21,7 +21,7 @@
     "script": "tsx scripts/run-cached-scripts.ts",
     "test": "playwright test",
     "typecheck": "tsc --noEmit",
-    "postinstall": "mkdir -p screenshots reports logs scripts scripts/cache tests/generated",
+    "postinstall": "mkdir -p screenshots reports logs scripts scripts/cache tests/generated sequences sequences/backup",
     "ai": "tsx src/cli/intelligent-cli.ts",
     "ai:build": "npm run build && npm link",
     "demo": "tsx demo.ts"
@@ -42,15 +42,17 @@
   },
   "dependencies": {
     "@playwright/test": "^1.49.0",
+    "@types/uuid": "^10.0.0",
     "chalk": "^4.1.2",
     "commander": "^12.1.0",
     "dotenv": "^16.4.7",
     "fs-extra": "^11.2.0",
+    "js-tiktoken": "^1.0.15",
     "openai": "^4.73.0",
     "playwright": "^1.49.0",
-    "winston": "^3.17.0",
+    "uuid": "^11.1.0",
     "vectra": "^0.9.0",
-    "js-tiktoken": "^1.0.15"
+    "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

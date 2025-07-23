@@ -158,6 +158,43 @@ import { chromium, firefox, webkit } from '@playwright/test';`;
       case 'screenshot':
         return `await page.screenshot({ path: 'screenshots/${action.name}.png', fullPage: ${action.options?.fullPage ?? true} });`;
       
+      case 'goBack':
+        return `await page.goBack({ waitUntil: '${action.waitUntil || 'load'}' });`;
+      
+      case 'goForward':
+        return `await page.goForward({ waitUntil: '${action.waitUntil || 'load'}' });`;
+      
+      case 'reload':
+        return `await page.reload({ waitUntil: '${action.waitUntil || 'load'}' });`;
+      
+      case 'newTab': {
+        const code = ['const newPage = await context.newPage();'];
+        if (action.url) {
+          code.push(`await newPage.goto('${action.url}');`);
+        }
+        code.push('page = newPage;');
+        return code.join('\n    ');
+      }
+      
+      case 'switchTab': {
+        if (action.index !== undefined) {
+          return `page = context.pages()[${action.index}];\n    await page.bringToFront();`;
+        } else if (action.url) {
+          return `page = context.pages().find(p => p.url().includes('${action.url}'));\n    await page.bringToFront();`;
+        } else if (action.title) {
+          return `for (const p of context.pages()) {\n      if ((await p.title()).includes('${action.title}')) {\n        page = p;\n        await page.bringToFront();\n        break;\n      }\n    }`;
+        }
+        return '// Invalid switchTab action';
+      }
+      
+      case 'closeTab': {
+        if (action.index !== undefined) {
+          return `await context.pages()[${action.index}].close();`;
+        } else {
+          return `await page.close();\n    page = context.pages()[context.pages().length - 1];`;
+        }
+      }
+      
       default:
         return '// Unknown action type';
     }
@@ -184,6 +221,21 @@ import { chromium, firefox, webkit } from '@playwright/test';`;
         return `Select "${action.value}" in ${action.selector}`;
       case 'screenshot':
         return `Take screenshot: ${action.name}`;
+      case 'goBack':
+        return 'Navigate back to previous page';
+      case 'goForward':
+        return 'Navigate forward in browser history';
+      case 'reload':
+        return 'Reload the current page';
+      case 'newTab':
+        return action.url ? `Open new tab with URL: ${action.url}` : 'Open new tab';
+      case 'switchTab':
+        if (action.index !== undefined) return `Switch to tab at index ${action.index}`;
+        if (action.url) return `Switch to tab with URL containing: ${action.url}`;
+        if (action.title) return `Switch to tab with title containing: ${action.title}`;
+        return 'Switch tab';
+      case 'closeTab':
+        return action.index !== undefined ? `Close tab at index ${action.index}` : 'Close current tab';
       default:
         return '';
     }

@@ -1,0 +1,147 @@
+{
+  "metadata": {
+    "id": "62e7411a-3a28-4008-ae42-04a2d6c54f6d",
+    "name": "amazon socks",
+    "description": "Interactive automation session with 4 commands",
+    "createdAt": "2025-07-20T19:12:04.054Z",
+    "usageCount": 0,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100
+  },
+  "originalPrompt": "1. open amazon\n2. search for some socks\n3. click on white socks product link\n4. click on the product link for the monfoot men's/women's 3-10 pairs silky dry athletic socks to navigate to the product page",
+  "script": {
+    "name": "amazon socks",
+    "description": "Interactive session: 4 commands",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "textarea[name='q']",
+          "#APjFqb",
+          "input[role='combobox']"
+        ],
+        "text": "amazon"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "textarea[name='q']",
+          "#APjFqb",
+          "input[role='combobox']"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          "h3",
+          ".g",
+          ".rc"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "h3:has-text('Amazon')",
+          "[href*='amazon.com']",
+          ".g a"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "input#twotabsearchtextbox"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "text": "socks"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": ".s-result-item"
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/s?k=socks&ref=nb_sb_noss"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": ".s-result-item"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "h2.s-size-mini-headline a:has-text('white socks')",
+          "h2 a[aria-hidden='true']:has-text('white socks')",
+          "h2.a-size-mini a:has-text('white socks')",
+          "[role='link']:has-text('white socks')",
+          "a[href*='white socks']"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/s?k=socks&ref=nb_sb_noss"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          ".s-result-item"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "h2.s-size-mini-headline a:has-text('monfoot men's/women's 3-10 pairs silky dry athletic socks')",
+          "a[aria-label*='monfoot men's/women's 3-10 pairs silky dry athletic socks']",
+          "h2:has-text('monfoot men's/women's 3-10 pairs silky dry athletic socks')"
+        ]
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          "#productTitle"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-20T19:12:04.054Z",
+      "success": true,
+      "executionTime": 41644,
+      "errors": []
+    }
+  ]
+}

@@ -13,6 +13,7 @@ export interface BrowserConfig {
     height: number;
   };
   args?: string[];
+  screenshotPath?: string;
 }
 
 /**
@@ -113,7 +114,13 @@ export type BrowserAction =
   | ScrollAction 
   | SelectAction 
   | ScreenshotAction
-  | PressAction;
+  | PressAction
+  | GoBackAction
+  | GoForwardAction
+  | ReloadAction
+  | NewTabAction
+  | SwitchTabAction
+  | CloseTabAction;
 
 export interface NavigateAction {
   type: 'navigate';
@@ -139,6 +146,38 @@ export interface SelectAction {
   type: 'select';
   selector: string | string[];  // Support multiple candidate selectors
   value: string | string[];
+}
+
+export interface GoBackAction {
+  type: 'goBack';
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle';
+}
+
+export interface GoForwardAction {
+  type: 'goForward';
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle';
+}
+
+export interface ReloadAction {
+  type: 'reload';
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle';
+}
+
+export interface NewTabAction {
+  type: 'newTab';
+  url?: string;
+}
+
+export interface SwitchTabAction {
+  type: 'switchTab';
+  index?: number;
+  url?: string;
+  title?: string;
+}
+
+export interface CloseTabAction {
+  type: 'closeTab';
+  index?: number;
 }
 
 /**
@@ -179,4 +218,75 @@ export interface LoggerConfig {
   level: 'error' | 'warn' | 'info' | 'debug';
   format?: 'json' | 'simple';
   filename?: string;
+}
+
+/**
+ * Automation sequence metadata
+ */
+export interface SequenceMetadata {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt: Date;
+  lastUsed?: Date;
+  usageCount: number;
+  tags?: string[];
+  category?: string;
+  successRate?: number;
+}
+
+/**
+ * Execution result from an automation run
+ */
+export interface AutomationExecutionResult {
+  success: boolean;
+  script: AutomationScript;
+  executionTime: number;
+  screenshots: string[];
+  errors?: string[];
+  stepResults?: Array<{
+    step: string;
+    success: boolean;
+    error?: string;
+    duration: number;
+  }>;
+}
+
+/**
+ * Automation sequence - combines prompt, script, and metadata for reuse
+ */
+export interface AutomationSequence {
+  metadata: SequenceMetadata;
+  originalPrompt: string;
+  script: AutomationScript;
+  executionHistory: Array<{
+    timestamp: Date;
+    success: boolean;
+    executionTime: number;
+    errors?: string[];
+  }>;
+}
+
+/**
+ * Sequence manager configuration
+ */
+export interface SequenceConfig {
+  sequencesPath: string;
+  backupPath?: string;
+  maxHistoryLength?: number;
+  autoBackup?: boolean;
+}
+
+/**
+ * Search criteria for finding sequences
+ */
+export interface SequenceSearchCriteria {
+  name?: string;
+  category?: string;
+  tags?: string[];
+  url?: string;
+  prompt?: string;
+  createdAfter?: Date;
+  createdBefore?: Date;
+  minSuccessRate?: number;
 } 

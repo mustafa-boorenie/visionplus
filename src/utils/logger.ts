@@ -1,6 +1,7 @@
 import winston from 'winston';
 import path from 'path';
 import { Config } from './config';
+import chalk from 'chalk';
 
 const { combine, timestamp, printf, colorize, errors } = winston.format;
 
@@ -47,6 +48,65 @@ export const logger = winston.createLogger({
 });
 
 /**
+ * Enhanced logging for automation steps
+ */
+export interface StepLogContext {
+  stepIndex: number;
+  totalSteps: number;
+  stepDescription: string;
+  action?: any;
+  pageUrl?: string;
+  pageTitle?: string;
+  htmlLength?: number;
+  screenshotPath?: string;
+  error?: any;
+  retryCount?: number;
+  duration?: number;
+  selectorCandidates?: string[];
+  elementFound?: boolean;
+}
+
+/**
+ * Log detailed step execution
+ */
+function logStep(context: StepLogContext): void {
+  const prefix = `[STEP ${context.stepIndex}/${context.totalSteps}]`;
+  
+  if (context.error) {
+    console.error(
+      chalk.red(`${prefix} ❌ ${context.stepDescription}`),
+      {
+        action: context.action,
+        error: context.error,
+        retryCount: context.retryCount,
+        pageUrl: context.pageUrl,
+        screenshotPath: context.screenshotPath
+      }
+    );
+  } else {
+    console.info(
+      chalk.green(`${prefix} ✓ ${context.stepDescription}`),
+      {
+        action: context.action,
+        duration: context.duration,
+        pageUrl: context.pageUrl,
+        elementFound: context.elementFound
+      }
+    );
+  }
+}
+
+/**
+ * Log recovery attempt
+ */
+function logRecovery(message: string, details: any): void {
+  console.info(
+    chalk.yellow(`[RECOVERY] ${message}`),
+    details
+  );
+}
+
+/**
  * Log utilities
  */
 export const log = {
@@ -85,5 +145,15 @@ export const log = {
    */
   performance: (operation: string, duration: number) => {
     logger.info(`[PERFORMANCE] ${operation} completed in ${duration}ms`);
-  }
+  },
+
+  /**
+   * Log detailed step execution
+   */
+  step: logStep,
+
+  /**
+   * Log recovery attempt
+   */
+  recovery: logRecovery
 }; 

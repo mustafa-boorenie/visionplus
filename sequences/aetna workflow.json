@@ -1,0 +1,194 @@
+{
+  "metadata": {
+    "id": "97a6a278-9708-465b-a2f3-a55c73226970",
+    "name": "aetna workflow",
+    "description": "Interactive automation session with 7 commands",
+    "createdAt": "2025-07-21T19:07:13.611Z",
+    "usageCount": 1,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100,
+    "lastUsed": "2025-07-21T19:07:59.444Z"
+  },
+  "originalPrompt": "1. search for aetna join the network portal\n2. click the first link that says health care providers: join the aetna network\n3. click close on the pop up titled 'improving your site experience'\n4. click on the  medical tab\n5. click the medical - request for participation button\n6. go to the drop down labeled I am Interseted In and choose Aetna from the drop down menu\n7. click the dropdown menu labelled \"I am interested In\"",
+  "script": {
+    "name": "aetna workflow",
+    "description": "Interactive session: 7 commands",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "textarea[name='q']",
+          "#APjFqb",
+          "input[aria-label='Search']"
+        ],
+        "text": "aetna join the network portal"
+      },
+      {
+        "type": "wait",
+        "duration": 500
+      },
+      {
+        "type": "press",
+        "selector": [
+          "textarea[name='q']",
+          "#APjFqb",
+          "input[aria-label='Search']"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 3000
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.google.com/search?q=aetna+join+the+network+portal&sca_esv=d4acbba8fa1ce30c&source=hp&ei=qY5-aJevGZWzmtkP-sfXsQ0&iflsig=AOw8s4IAAAAAaH6cufocOi88jGvJX6mUIxzfWNoYkjMF&ved=0ahUKEwjXp-Li0c6OAxWVmSYFHfrjNdYQ4dUDCBA&uact=5&oq=aetna+join+the+network+portal&gs_lp=Egdnd3Mtd2l6Ih1hZXRuYSBqb2luIHRoZSBuZXR3b3JrIHBvcnRhbDIFECEYoAEyBRAhGKABMgUQIRigATIFECEYoAEyBRAhGJ8FMgUQIRifBTIFECEYnwVIlARQAFgAcAB4AJABAJgBW6ABW6oBATG4AQPIAQD4AQGYAgGgAmGYAwCSBwExoAfGB7IHATG4B2HCBwMyLTHIBwM&sclient=gws-wiz&sei=qo5-aJSLGNSmmtkP-LCN-Ag"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": ".g"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "a[href*='health-care-providers-join-the-aetna-network']",
+          "h3:has-text('health care providers: join the aetna network')",
+          "a:has-text('health care providers: join the aetna network')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.aetna.com/health-care-professionals/join-the-aetna-network.html"
+      },
+      {
+        "type": "wait",
+        "duration": 5000,
+        "selector": ".modal-dialog"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button:has-text('Close')",
+          "[aria-label='Close']",
+          "[data-testid='close-button']",
+          "button.close",
+          "[role='button']:has-text('Close')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.aetna.com/health-care-professionals/join-the-aetna-network.html"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "[data-testid='medical-tab']"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "[data-testid='medical-tab']",
+          "#med-tab",
+          "[role='tab']:has-text('Medical')",
+          ".tab--medical",
+          "[data-tab='medical']"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.aetna.com/health-care-professionals/join-the-aetna-network.html#tab_content_section_tabs_link_tabs_2"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          "#request-participation-button",
+          "[data-testid='request-participation']",
+          "[role='button']:has-text('Request for Participation')"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "#request-participation-button",
+          "[data-testid='request-participation']",
+          "[role='button']:has-text('Request for Participation')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.aetna.com/health-care-professionals/join-the-aetna-network.html#tab_content_section_tabs_link_tabs_2"
+      },
+      {
+        "type": "wait",
+        "duration": 500,
+        "selector": [
+          "#interestedInDropdown",
+          "[aria-label='I am Interested In']",
+          "[role='combobox']"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "#interestedInDropdown",
+          "[aria-label='I am Interested In']",
+          "[role='combobox']"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "option[value='Aetna']",
+          "li:has-text('Aetna')",
+          "[role='option']:has-text('Aetna')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.aetna.com/individuals-families.html?icid=aetnacom_tab_aetna"
+      },
+      {
+        "type": "wait",
+        "duration": 5000,
+        "selector": [
+          "#interest-dropdown",
+          "[aria-label='I am interested In']",
+          "[role='combobox']:has-text('I am interested In')"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "#interest-dropdown",
+          "[aria-label='I am interested In']",
+          "[role='combobox']:has-text('I am interested In')"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-21T19:07:13.611Z",
+      "success": true,
+      "executionTime": 77814,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-21T19:07:59.444Z",
+      "success": true,
+      "executionTime": 16980,
+      "errors": []
+    }
+  ]
+}

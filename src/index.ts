@@ -5,6 +5,7 @@ export { BrowserAutomation } from './browser/BrowserAutomation';
 export { VisionAnalyzer } from './vision/VisionAnalyzer';
 export { ScriptRunner } from './ScriptRunner';
 export { ResultsHandler } from './utils/ResultsHandler';
+export { SequenceManager } from './utils/SequenceManager';
 export { Config } from './utils/config';
 export { log } from './utils/logger';
 export { IntelligentAutomation } from './automation/IntelligentAutomation';

@@ -202,7 +202,162 @@ program
     }
   });
 
+program
+  .command('sequences')
+  .description('Manage automation sequences')
+  .option('-l, --list', 'List all saved sequences')
+  .option('-s, --stats', 'Show sequence statistics')
+  .option('-r, --run <name>', 'Run a specific sequence')
+  .option('-d, --delete <name>', 'Delete a sequence')
+  .option('-a, --append <name>', 'Append last automation to existing sequence')
+  .option('--export <path>', 'Export sequences to a file')
+  .option('--import <path>', 'Import sequences from a file')
+  .option('--overwrite', 'Overwrite existing sequences when importing')
+  .action(async (options) => {
+    try {
+      const { SequenceManager } = await import('../utils/SequenceManager');
+      const sequenceManager = new SequenceManager();
+      await sequenceManager.initialize();
 
+      if (options.list) {
+        const sequences = await sequenceManager.listSequences();
+        
+        if (sequences.length === 0) {
+          console.log(chalk.yellow('\n📋 No sequences found'));
+          console.log(chalk.gray('💡 Use interactive mode and "save <name>" to create sequences\n'));
+          return;
+        }
+
+        console.log(chalk.cyan('\n📋 Saved Automation Sequences\n'));
+        
+        sequences.forEach((sequence, index) => {
+          const { metadata } = sequence;
+          console.log(chalk.cyan(`${index + 1}. ${metadata.name}`));
+          console.log(chalk.gray(`   Prompt: ${sequence.originalPrompt}`));
+          console.log(chalk.gray(`   Created: ${metadata.createdAt.toLocaleDateString()}`));
+          console.log(chalk.gray(`   Used: ${metadata.usageCount} times`));
+          console.log(chalk.gray(`   Success rate: ${metadata.successRate || 0}%`));
+          if (metadata.tags && metadata.tags.length > 0) {
+            console.log(chalk.gray(`   Tags: ${metadata.tags.join(', ')}`));
+          }
+          console.log('');
+        });
+
+        console.log(chalk.gray(`Total: ${sequences.length} sequences`));
+        console.log(chalk.gray('Use "npm run ai -- sequences --run <name>" to execute a sequence\n'));
+
+      } else if (options.stats) {
+        const stats = await sequenceManager.getStatistics();
+        
+        console.log(chalk.cyan('\n📊 Sequence Statistics\n'));
+        console.log(`Total Sequences: ${chalk.yellow(stats.totalSequences)}`);
+        console.log(`Total Executions: ${chalk.yellow(stats.totalExecutions)}`);
+        console.log(`Average Success Rate: ${chalk.yellow(stats.averageSuccessRate + '%')}`);
+        
+        if (stats.mostUsedSequence) {
+          console.log(`Most Used: ${chalk.yellow(stats.mostUsedSequence)}`);
+        }
+        
+        if (stats.categories.length > 0) {
+          console.log(`Categories: ${chalk.yellow(stats.categories.join(', '))}`);
+        }
+        console.log('');
+
+      } else if (options.run) {
+        const sequenceName = options.run;
+        console.log(chalk.blue(`\n🏃 Running sequence "${sequenceName}"...\n`));
+        
+        const sequence = await sequenceManager.loadSequence(sequenceName);
+        if (!sequence) {
+          console.log(chalk.red(`❌ Sequence "${sequenceName}" not found`));
+          console.log(chalk.gray('Use --list to see available sequences\n'));
+          return;
+        }
+
+        console.log(chalk.gray(`Original prompt: ${sequence.originalPrompt}`));
+        console.log(chalk.gray(`Success rate: ${sequence.metadata.successRate || 0}%\n`));
+
+        // Import and run the automation
+        const { IntelligentAutomation } = await import('../automation/IntelligentAutomation');
+        const automation = new IntelligentAutomation(sequence.originalPrompt, true);
+        
+        const startTime = Date.now();
+        
+        try {
+          const executionResult = await automation.execute(sequence.script.url);
+          
+          // Update sequence history
+          await sequenceManager.updateSequenceHistory(sequenceName, {
+            success: executionResult.success,
+            executionTime: executionResult.executionTime,
+            errors: executionResult.errors || []
+          });
+          
+          console.log(chalk.green(`\n✅ Sequence "${sequenceName}" completed successfully!`));
+          
+        } catch (error) {
+          const executionTime = Date.now() - startTime;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          
+          // Update sequence history with failure
+          await sequenceManager.updateSequenceHistory(sequenceName, {
+            success: false,
+            executionTime,
+            errors: [errorMessage]
+          });
+          
+          console.error(chalk.red(`❌ Sequence failed: ${errorMessage}`));
+        }
+
+      } else if (options.delete) {
+        const sequenceName = options.delete;
+        console.log(chalk.blue(`\n🗑️  Deleting sequence "${sequenceName}"...`));
+        
+        const deleted = await sequenceManager.deleteSequence(sequenceName);
+        if (deleted) {
+          console.log(chalk.green(`✅ Sequence "${sequenceName}" deleted successfully`));
+        } else {
+          console.log(chalk.yellow(`❌ Sequence "${sequenceName}" not found`));
+        }
+
+      } else if (options.append) {
+        console.log(chalk.yellow('\n⚠️  CLI append is not supported yet'));
+        console.log(chalk.gray('💡 Use interactive mode to append automations:'));
+        console.log(chalk.gray('   1. npm run ai interactive'));
+        console.log(chalk.gray('   2. Run your automation command'));
+        console.log(chalk.gray(`   3. append ${options.append}`));
+        console.log('');
+
+      } else if (options.export) {
+        const exportPath = options.export;
+        console.log(chalk.blue(`\n📤 Exporting sequences to ${exportPath}...`));
+        
+        await sequenceManager.exportSequences(exportPath);
+        console.log(chalk.green(`✅ Sequences exported successfully`));
+
+      } else if (options.import) {
+        const importPath = options.import;
+        console.log(chalk.blue(`\n📥 Importing sequences from ${importPath}...`));
+        
+        const importedCount = await sequenceManager.importSequences(importPath, options.overwrite);
+        console.log(chalk.green(`✅ Imported ${importedCount} sequences`));
+
+      } else {
+        console.log(chalk.yellow('\n⚠️  Please specify an action:'));
+        console.log(chalk.gray('  --list              List all sequences'));
+        console.log(chalk.gray('  --stats             Show statistics'));
+        console.log(chalk.gray('  --run <name>        Run a sequence'));
+        console.log(chalk.gray('  --delete <name>     Delete a sequence'));
+        console.log(chalk.gray('  --append <name>     Append to sequence (use interactive mode)'));
+        console.log(chalk.gray('  --export <path>     Export sequences'));
+        console.log(chalk.gray('  --import <path>     Import sequences'));
+        console.log(chalk.gray('\nExample: npm run ai -- sequences --list\n'));
+      }
+
+    } catch (error) {
+      console.error(chalk.red('\n❌ Error managing sequences:'), error);
+    }
+  });
 
 // Parse command line arguments
 program.parse(process.argv);

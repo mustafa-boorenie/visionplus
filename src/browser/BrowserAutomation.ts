@@ -12,7 +12,13 @@ import {
   ScrollAction,
   SelectAction,
   ScreenshotAction,
-  PressAction
+  PressAction,
+  GoBackAction,
+  GoForwardAction,
+  ReloadAction,
+  NewTabAction,
+  SwitchTabAction,
+  CloseTabAction
 } from '../types';
 import { Config } from '../utils/config';
 import { log } from '../utils/logger';
@@ -29,6 +35,13 @@ export class BrowserAutomation {
 
   constructor(config?: Partial<BrowserConfig>) {
     this.config = { ...Config.BROWSER_CONFIG, ...config };
+  }
+
+  /**
+   * Get the current page instance
+   */
+  get currentPage(): Page | null {
+    return this.page;
   }
 
   /**
@@ -244,6 +257,24 @@ export class BrowserAutomation {
         case 'press':
           await this.press(action as PressAction);
           break;
+        case 'goBack':
+          await this.goBack(action as GoBackAction);
+          break;
+        case 'goForward':
+          await this.goForward(action as GoForwardAction);
+          break;
+        case 'reload':
+          await this.reload(action as ReloadAction);
+          break;
+        case 'newTab':
+          await this.newTab(action as NewTabAction);
+          break;
+        case 'switchTab':
+          await this.switchTab(action as SwitchTabAction);
+          break;
+        case 'closeTab':
+          await this.closeTab(action as CloseTabAction);
+          break;
         default:
           throw new Error(`Unknown action type: ${(action as any).type}`);
       }
@@ -398,6 +429,140 @@ export class BrowserAutomation {
   }
 
   /**
+   * Go back in browser history
+   */
+  private async goBack(action: GoBackAction): Promise<void> {
+    log.action('Going back in browser history');
+    await this.page!.goBack({
+      waitUntil: action.waitUntil || 'load',
+      timeout: 30000
+    });
+  }
+
+  /**
+   * Go forward in browser history
+   */
+  private async goForward(action: GoForwardAction): Promise<void> {
+    log.action('Going forward in browser history');
+    await this.page!.goForward({
+      waitUntil: action.waitUntil || 'load',
+      timeout: 30000
+    });
+  }
+
+  /**
+   * Reload the current page
+   */
+  private async reload(action: ReloadAction): Promise<void> {
+    log.action('Reloading page');
+    await this.page!.reload({
+      waitUntil: action.waitUntil || 'load',
+      timeout: 30000
+    });
+  }
+
+  /**
+   * Open a new tab
+   */
+  private async newTab(action: NewTabAction): Promise<void> {
+    log.action(`Opening new tab${action.url ? ` with URL: ${action.url}` : ''}`);
+    const newPage = await this.context!.newPage();
+    
+    if (action.url) {
+      await newPage.goto(action.url, {
+        waitUntil: 'load',
+        timeout: 30000
+      });
+    }
+    
+    // Switch to the new tab
+    this.page = newPage;
+    await this.ensurePageActive();
+  }
+
+  /**
+   * Switch between tabs
+   */
+  private async switchTab(action: SwitchTabAction): Promise<void> {
+    const pages = this.context!.pages();
+    
+    if (action.index !== undefined) {
+      log.action(`Switching to tab at index ${action.index}`);
+      if (action.index >= 0 && action.index < pages.length) {
+        this.page = pages[action.index];
+        await this.page.bringToFront();
+      } else {
+        throw new Error(`Tab index ${action.index} out of range (0-${pages.length - 1})`);
+      }
+    } else if (action.url) {
+      log.action(`Switching to tab with URL containing: ${action.url}`);
+      const matchingPage = pages.find(page => page.url().includes(action.url!));
+      if (matchingPage) {
+        this.page = matchingPage;
+        await this.page.bringToFront();
+      } else {
+        throw new Error(`No tab found with URL containing: ${action.url}`);
+      }
+    } else if (action.title) {
+      log.action(`Switching to tab with title containing: ${action.title}`);
+      for (const page of pages) {
+        const title = await page.title();
+        if (title.includes(action.title)) {
+          this.page = page;
+          await this.page.bringToFront();
+          return;
+        }
+      }
+      throw new Error(`No tab found with title containing: ${action.title}`);
+    } else {
+      throw new Error('SwitchTab action requires either index, url, or title');
+    }
+    
+    await this.ensurePageActive();
+  }
+
+  /**
+   * Close a tab
+   */
+  private async closeTab(action: CloseTabAction): Promise<void> {
+    const pages = this.context!.pages();
+    
+    if (pages.length === 1) {
+      throw new Error('Cannot close the last tab');
+    }
+    
+    if (action.index !== undefined) {
+      log.action(`Closing tab at index ${action.index}`);
+      if (action.index >= 0 && action.index < pages.length) {
+        const pageToClose = pages[action.index];
+        const isCurrentPage = pageToClose === this.page;
+        
+        await pageToClose.close();
+        
+        // If we closed the current page, switch to another one
+        if (isCurrentPage) {
+          const remainingPages = this.context!.pages();
+          this.page = remainingPages[remainingPages.length - 1];
+          await this.ensurePageActive();
+        }
+      } else {
+        throw new Error(`Tab index ${action.index} out of range (0-${pages.length - 1})`);
+      }
+    } else {
+      log.action('Closing current tab');
+      const currentPage = this.page!;
+      const currentIndex = pages.indexOf(currentPage);
+      
+      // Switch to another tab before closing
+      const newIndex = currentIndex > 0 ? currentIndex - 1 : 1;
+      this.page = pages[newIndex];
+      await this.ensurePageActive();
+      
+      await currentPage.close();
+    }
+  }
+
+  /**
    * Take screenshot with specified options
    */
   async takeScreenshot(name: string, options?: ScreenshotOptions): Promise<string> {
@@ -433,17 +598,6 @@ export class BrowserAutomation {
   }
 
   /**
-   * Get current page URL
-   */
-  async getCurrentUrl(): Promise<string> {
-    if (!this.page) {
-      throw new Error('Browser not initialized');
-    }
-    return this.page.url();
-  }
-
-
-  /**
    * Evaluate JavaScript in page context
    */
   async evaluate<T>(fn: () => T): Promise<T> {
@@ -454,6 +608,17 @@ export class BrowserAutomation {
     }
     return await this.page.evaluate(fn);
   }
+
+  /**
+   * Get current page URL
+   */
+  async getCurrentUrl(): Promise<string> {
+    if (!this.page) {
+      throw new Error('Browser not initialized');
+    }
+    return this.page.url();
+  }
+
 
   /**
    * Close browser
@@ -477,10 +642,123 @@ export class BrowserAutomation {
   }
 
   /**
-   * Get page instance
+   * Get the current page instance
    */
   getPage(): Page | null {
     return this.page;
+  }
+
+  /**
+   * Capture browser session state
+   */
+  async captureSessionState(): Promise<{
+    cookies: any[];
+    localStorage: Record<string, string>;
+    sessionStorage: Record<string, string>;
+    url: string;
+    title: string;
+    viewport: { width: number; height: number } | null;
+  }> {
+    if (!this.page) {
+      throw new Error('Page not initialized');
+    }
+
+    try {
+      const [cookies, storageData, url, title, viewport] = await Promise.all([
+        this.context!.cookies(),
+        this.page.evaluate(() => ({
+          localStorage: { ...window.localStorage },
+          sessionStorage: { ...window.sessionStorage }
+        })),
+        this.page.url(),
+        this.page.title(),
+        this.page.viewportSize()
+      ]);
+
+      return {
+        cookies,
+        localStorage: storageData.localStorage,
+        sessionStorage: storageData.sessionStorage,
+        url,
+        title,
+        viewport
+      };
+    } catch (error) {
+      log.error('Failed to capture session state', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Restore browser session state
+   */
+  async restoreSessionState(state: {
+    cookies?: any[];
+    localStorage?: Record<string, string>;
+    sessionStorage?: Record<string, string>;
+    url?: string;
+    viewport?: { width: number; height: number };
+  }): Promise<void> {
+    if (!this.page || !this.context) {
+      throw new Error('Browser not initialized');
+    }
+
+    try {
+      // Restore cookies
+      if (state.cookies) {
+        await this.context.addCookies(state.cookies);
+      }
+
+      // Restore viewport
+      if (state.viewport) {
+        await this.page.setViewportSize(state.viewport);
+      }
+
+      // Navigate to URL if provided
+      if (state.url) {
+        await this.page.goto(state.url);
+      }
+
+      // Restore storage
+      if (state.localStorage || state.sessionStorage) {
+        await this.page.evaluate((storage) => {
+          if (storage.localStorage) {
+            Object.entries(storage.localStorage).forEach(([key, value]) => {
+              window.localStorage.setItem(key, value);
+            });
+          }
+          if (storage.sessionStorage) {
+            Object.entries(storage.sessionStorage).forEach(([key, value]) => {
+              window.sessionStorage.setItem(key, value);
+            });
+          }
+        }, { localStorage: state.localStorage, sessionStorage: state.sessionStorage });
+      }
+
+      log.info('Session state restored successfully');
+    } catch (error) {
+      log.error('Failed to restore session state', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Save session state to file
+   */
+  async saveSessionStateToFile(filepath: string): Promise<void> {
+    const state = await this.captureSessionState();
+    await fs.ensureDir(path.dirname(filepath));
+    await fs.writeJson(filepath, state, { spaces: 2 });
+    log.info(`Session state saved to: ${filepath}`);
+  }
+
+  /**
+   * Load session state from file
+   */
+  async loadSessionStateFromFile(filepath: string): Promise<void> {
+    const state = await fs.readJson(filepath);
+    await this.restoreSessionState(state);
+    log.info(`Session state loaded from: ${filepath}`);
   }
   
   /**
@@ -521,5 +799,116 @@ export class BrowserAutomation {
       // Ignore errors
     }
     return null;
+  }
+
+  /**
+   * Get current page HTML content
+   */
+  async getPageHTML(): Promise<string> {
+    if (!this.page) {
+      throw new Error('Page not initialized');
+    }
+    
+    try {
+      const html = await this.page.content();
+      return html;
+    } catch (error) {
+      log.error('Failed to get page HTML', error as Error);
+      return '';
+    }
+  }
+
+  /**
+   * Take a high-quality screenshot with error context
+   */
+  async takeHighQualityScreenshot(name: string, includeFullPage: boolean = true): Promise<string> {
+    if (!this.page) {
+      throw new Error('Page not initialized');
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${name}_${timestamp}.png`;
+    const filepath = path.join(this.config.screenshotPath || './screenshots', filename);
+    
+    await fs.ensureDir(path.dirname(filepath));
+    
+    try {
+      await this.page.screenshot({
+        path: filepath,
+        fullPage: includeFullPage,
+        type: 'png'  // PNG for highest quality, no compression
+      });
+      
+      log.info(`High-quality screenshot saved: ${filepath}`);
+      return filepath;
+    } catch (error) {
+      log.error('Failed to take high-quality screenshot', error as Error);
+      throw error;
+    }
+  }
+
+  /**
+   * Capture failure context (HTML + Screenshot)
+   */
+  async captureFailureContext(stepDescription: string): Promise<{ html: string; screenshotPath: string }> {
+    log.info(`[FAILURE_CONTEXT] Capturing context for failed step: ${stepDescription}`);
+    
+    try {
+      // Capture HTML first (most important for debugging)
+      const html = await this.getPageHTML();
+      
+      // Log HTML details
+      log.info(`[FAILURE_CONTEXT] Captured HTML length: ${html.length} characters`);
+      
+      // Save HTML to file for debugging
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const htmlFilename = `failure_${stepDescription.replace(/\s+/g, '_')}_${timestamp}.html`;
+      const htmlPath = path.join('./logs', htmlFilename);
+      await fs.ensureDir(path.dirname(htmlPath));
+      await fs.writeFile(htmlPath, html);
+      log.info(`[FAILURE_CONTEXT] HTML saved to: ${htmlPath}`);
+      
+      // Log first 2000 chars of HTML for immediate debugging
+      const htmlPreview = html.slice(0, 2000);
+      log.debug(`[FAILURE_CONTEXT] HTML preview:\n${htmlPreview}\n... (truncated)`);
+      
+      // Take high-quality screenshot
+      const screenshotPath = await this.takeHighQualityScreenshot(`failure_${stepDescription.replace(/\s+/g, '_')}`);
+      
+      // Log key page information
+      const pageInfo = await this.page!.evaluate(() => {
+        return {
+          title: document.title,
+          url: window.location.href,
+          readyState: document.readyState,
+          hasCaptcha: !!document.querySelector('[class*="captcha"], [id*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]'),
+          hasModal: !!document.querySelector('[role="dialog"], .modal, .popup'),
+          formCount: document.querySelectorAll('form').length,
+          inputCount: document.querySelectorAll('input, textarea, select').length,
+          buttonCount: document.querySelectorAll('button, input[type="submit"], input[type="button"]').length
+        };
+      });
+      
+      log.info(`[FAILURE_CONTEXT] Page info: ${JSON.stringify(pageInfo, null, 2)}`);
+      
+      return { html, screenshotPath };
+    } catch (error) {
+      log.error('Failed to capture failure context', error as Error);
+      return { html: '', screenshotPath: '' };
+    }
+  }
+
+  /**
+   * Enhanced execute action with failure context capture
+   */
+  async executeActionWithContext(action: BrowserAction): Promise<{ success: boolean; context?: { html: string; screenshotPath: string } }> {
+    try {
+      await this.executeAction(action);
+      return { success: true };
+    } catch (error) {
+      // Capture context on failure
+      const context = await this.captureFailureContext(`${action.type} action`);
+      return { success: false, context };
+    }
   }
 } 

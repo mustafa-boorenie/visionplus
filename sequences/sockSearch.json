@@ -1,0 +1,69 @@
+{
+  "metadata": {
+    "id": "82f5c20d-3f83-46d2-9a7d-318381ddca43",
+    "name": "sockSearch",
+    "description": "Interactive automation session with 1 commands",
+    "createdAt": "2025-07-22T14:17:16.048Z",
+    "usageCount": 1,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100,
+    "lastUsed": "2025-07-22T14:17:44.979Z"
+  },
+  "originalPrompt": "1. search for white socks",
+  "script": {
+    "name": "sockSearch",
+    "description": "Interactive session: 1 commands",
+    "url": "https://www.amazon.com/",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/"
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "text": "white socks"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": ".s-result-item"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-22T14:17:16.048Z",
+      "success": true,
+      "executionTime": 15525,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-22T14:17:44.979Z",
+      "success": true,
+      "executionTime": 18172,
+      "errors": []
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "metadata": {
+    "id": "11d84f65-d87c-497f-bb2d-6d1cdc3218e9",
+    "name": "sonny baby search",
+    "description": "Interactive automation session with 4 commands",
+    "createdAt": "2025-07-20T19:00:29.073Z",
+    "usageCount": 1,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100,
+    "lastUsed": "2025-07-20T19:01:03.921Z"
+  },
+  "originalPrompt": "1. open amazon\n2. look up sonny angels\n3. click on the hippers version link\n4. click on the first products link to navigate to page",
+  "script": {
+    "name": "sonny baby search",
+    "description": "Interactive session: 4 commands",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "wait",
+        "duration": 1000,
+        "selector": "input[name='q']"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[name='q']",
+          "#APjFqb",
+          "textarea[name='q']"
+        ],
+        "text": "Amazon"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "input[name='q']",
+          "#APjFqb",
+          "textarea[name='q']"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": ".g"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "h3:has-text('Amazon')",
+          "a:has-text('Amazon')",
+          "a[href*='amazon.com']"
+        ]
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": "#nav-logo"
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "text": "sonny angels"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "input#twotabsearchtextbox",
+          "input[placeholder='Search Amazon']",
+          "page.getByRole('searchbox')"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          ".s-result-item",
+          "[data-component-type='s-search-result']"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/s?k=sonny+angels&ref=nb_sb_noss"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": ".s-result-item"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "a[href*='hippers']",
+          "h2.s-size-mini-headline a:has-text('Hippers')",
+          "a:has-text('Hippers version')",
+          "[role='link']:has-text('Hippers')",
+          ".s-result-item h2 a"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/s?k=sonny+angels&ref=nb_sb_noss"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          ".s-result-item"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "h2.s-size-mini-headline a",
+          "a[href^='/dp/']",
+          "h2 a:has-text('Sonny Angels')"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-20T19:00:29.073Z",
+      "success": true,
+      "executionTime": 46012,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-20T19:01:03.921Z",
+      "success": true,
+      "executionTime": 19705,
+      "errors": []
+    }
+  ]
+}

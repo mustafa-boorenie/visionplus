@@ -1,0 +1,57 @@
+import { test, expect } from '@playwright/test';
+import { chromium, firefox, webkit } from '@playwright/test';
+
+// Helper function to retry actions
+async function retryAction(action: () => Promise<void>, retries = 3): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await action();
+      return;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+}
+
+test.describe('intelligent-automation', () => {
+  test('go to the dell website link', async ({ page }) => {
+    // Set timeout for this test
+    test.setTimeout(60000);
+
+    // Navigate to https://www.google.com/search?q=laptop&sca_esv=25801ab66565780f&source=hp&ei=AkB9aLDVLM-6qtsP-daKsA4&iflsig=AOw8s4IAAAAAaH1OEvZuRizpv7BGgZ8eAmd5-I0asGQf&ved=0ahUKEwiw3ubPksyOAxVPnWoFHXmrAuYQ4dUDCBA&uact=5&oq=laptop&gs_lp=Egdnd3Mtd2l6IgZsYXB0b3BID1AAWABwAHgAkAEAmAEAoAEAqgEAuAEDyAEA-AEBmAIAoAIAmAMAkgcAoAcAsgcAuAcAwgcAyAcA&sclient=gws-wiz&sei=BEB9aPm8CZqxqtsPgNeI4QI
+    await page.goto('https://www.google.com/search?q=laptop&sca_esv=25801ab66565780f&source=hp&ei=AkB9aLDVLM-6qtsP-daKsA4&iflsig=AOw8s4IAAAAAaH1OEvZuRizpv7BGgZ8eAmd5-I0asGQf&ved=0ahUKEwiw3ubPksyOAxVPnWoFHXmrAuYQ4dUDCBA&uact=5&oq=laptop&gs_lp=Egdnd3Mtd2l6IgZsYXB0b3BID1AAWABwAHgAkAEAmAEAoAEAqgEAuAEDyAEA-AEBmAIAoAIAmAMAkgcAoAcAsgcAuAcAwgcAyAcA&sclient=gws-wiz&sei=BEB9aPm8CZqxqtsPgNeI4QI');
+
+    // Step 1: Navigate to https://www.google.com/search?q=laptop&sca_esv=25801ab66565780f&source=hp&ei=AkB9aLDVLM-6qtsP-daKsA4&iflsig=AOw8s4IAAAAAaH1OEvZuRizpv7BGgZ8eAmd5-I0asGQf&ved=0ahUKEwiw3ubPksyOAxVPnWoFHXmrAuYQ4dUDCBA&uact=5&oq=laptop&gs_lp=Egdnd3Mtd2l6IgZsYXB0b3BID1AAWABwAHgAkAEAmAEAoAEAqgEAuAEDyAEA-AEBmAIAoAIAmAMAkgcAoAcAsgcAuAcAwgcAyAcA&sclient=gws-wiz&sei=BEB9aPm8CZqxqtsPgNeI4QI
+    await page.goto('https://www.google.com/search?q=laptop&sca_esv=25801ab66565780f&source=hp&ei=AkB9aLDVLM-6qtsP-daKsA4&iflsig=AOw8s4IAAAAAaH1OEvZuRizpv7BGgZ8eAmd5-I0asGQf&ved=0ahUKEwiw3ubPksyOAxVPnWoFHXmrAuYQ4dUDCBA&uact=5&oq=laptop&gs_lp=Egdnd3Mtd2l6IgZsYXB0b3BID1AAWABwAHgAkAEAmAEAoAEAqgEAuAEDyAEA-AEBmAIAoAIAmAMAkgcAoAcAsgcAuAcAwgcAyAcA&sclient=gws-wiz&sei=BEB9aPm8CZqxqtsPgNeI4QI');
+    await expect(page).toHaveURL('https://www.google.com/search?q=laptop&sca_esv=25801ab66565780f&source=hp&ei=AkB9aLDVLM-6qtsP-daKsA4&iflsig=AOw8s4IAAAAAaH1OEvZuRizpv7BGgZ8eAmd5-I0asGQf&ved=0ahUKEwiw3ubPksyOAxVPnWoFHXmrAuYQ4dUDCBA&uact=5&oq=laptop&gs_lp=Egdnd3Mtd2l6IgZsYXB0b3BID1AAWABwAHgAkAEAmAEAoAEAqgEAuAEDyAEA-AEBmAIAoAIAmAMAkgcAoAcAsgcAuAcAwgcAyAcA&sclient=gws-wiz&sei=BEB9aPm8CZqxqtsPgNeI4QI');
+
+    // Step 2: Wait for 3000ms
+    await page.waitForTimeout(3000);
+
+    // Step 3: Wait for 2000ms
+    await page.waitForTimeout(2000);
+
+    // Step 4: Wait for 2000ms
+    await page.waitForTimeout(2000);
+
+    // Step 5: Wait for 2000ms
+    await page.waitForTimeout(2000);
+
+    // Step 6: Wait for 2000ms
+    await page.waitForTimeout(2000);
+
+    // Step 7: Wait for undefined
+    await page.waitForTimeout(1000);
+
+    // Step 8: Click on page.getByRole('link', { name: 'Dell' }),page.getByText('Dell', { exact: true }),a:has-text('Dell'),h3:has-text('Dell'),a[href*='dell.com']
+    await page.click('page.getByRole(\'link\', { name: \'Dell\' })');
+    await page.waitForLoadState('networkidle');
+
+    // Step 9: Wait for 3000ms
+    await page.waitForTimeout(3000);
+
+    // Verify test completed successfully
+    await expect(page).toHaveURL(/./);
+  });
+});
