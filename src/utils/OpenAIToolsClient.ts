@@ -326,6 +326,73 @@ Remember: Generate only the specific steps needed. Do not include explanations o
       return false;
     }
   }
+
+  /**
+   * Extract JavaScript code blocks from text
+   */
+  static extractJavaScriptCode(text: string): string[] {
+    const codeBlocks: string[] = [];
+    
+    // Match code blocks with language specifier
+    const codeBlockRegex = /```(?:javascript|js|typescript|ts)\n([\s\S]*?)```/g;
+    let match;
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      codeBlocks.push(match[1].trim());
+    }
+    
+    // If no language-specific blocks found, try generic code blocks
+    if (codeBlocks.length === 0) {
+      const genericCodeBlockRegex = /```\n([\s\S]*?)```/g;
+      while ((match = genericCodeBlockRegex.exec(text)) !== null) {
+        const code = match[1].trim();
+        // Check if it looks like JavaScript (basic heuristic)
+        if (code.includes('document.') || code.includes('querySelector') || 
+            code.includes('click()') || code.includes('const ') || 
+            code.includes('let ') || code.includes('var ')) {
+          codeBlocks.push(code);
+        }
+      }
+    }
+    
+    return codeBlocks;
+  }
+
+  /**
+   * Generate a prompt to get executable JavaScript code for automation recovery
+   */
+  static generateExecutableCodePrompt(
+    failureContext: any,
+    previousAnalysis?: string
+  ): string {
+    return `Based on this failure context, provide ONLY executable JavaScript code to fix the issue.
+
+Failure Context:
+${JSON.stringify(failureContext, null, 2)}
+
+${previousAnalysis ? `Previous Analysis: ${previousAnalysis}` : ''}
+
+Requirements:
+1. Return ONLY JavaScript code that can be executed directly in the browser
+2. The code should handle the specific issue that caused the failure
+3. Include any necessary waits or error handling
+4. If a modal/popup needs to be dismissed, include the code to do so
+5. Return the code in a javascript code block
+
+Example response format:
+\`\`\`javascript
+// Wait for modal to be visible
+await new Promise(resolve => setTimeout(resolve, 1000));
+
+// Try to dismiss modal with Escape key
+document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+
+// Alternative: try to click close button
+const closeButton = document.querySelector('.modal-close, [aria-label="Close"], button:contains("Close")');
+if (closeButton) {
+  closeButton.click();
+}
+\`\`\``;
+  }
 }
 
 /**

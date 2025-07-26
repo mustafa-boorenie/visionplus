@@ -6,6 +6,18 @@
 
 **VisionPlus** is an advanced AI-powered browser automation tool that combines Playwright with OpenAI's GPT and Vision models to create intelligent, self-healing web automation scripts.
 
+## 🎨 NEW: Electron Desktop App
+
+We now have a desktop application with a drag-and-drop interface for creating and managing automation sequences! 
+
+- **Visual Sequence Builder**: Drag and drop actions to build automations
+- **Credential Manager**: Securely store and use credentials
+- **CSV Data Support**: Import data for batch automation
+- **Interactive Recording**: Record actions as you perform them
+- **Test Mode**: Debug your sequences with live browser preview
+
+See [ELECTRON_APP_GUIDE.md](ELECTRON_APP_GUIDE.md) for installation and usage details.
+
 ## 🚀 Key Features
 
 ### 🧠 AI-Powered Automation

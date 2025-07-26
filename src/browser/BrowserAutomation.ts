@@ -4,6 +4,7 @@ import fs from 'fs-extra';
 import { 
   BrowserConfig, 
   BrowserAction, 
+  IBrowserAutomation,
   ScreenshotOptions,
   NavigateAction,
   ClickAction,
@@ -26,7 +27,7 @@ import { log } from '../utils/logger';
 /**
  * Browser automation class using Playwright
  */
-export class BrowserAutomation {
+export class BrowserAutomation implements IBrowserAutomation {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
@@ -223,68 +224,99 @@ export class BrowserAutomation {
   }
 
   /**
-   * Execute a browser action
+   * Execute single action
    */
-  async executeAction(action: BrowserAction): Promise<void> {
+  async executeAction(action: BrowserAction): Promise<any> {
+    // Track performance for all actions
     const startTime = Date.now();
+    
+    // Log the action being performed (similar to MCP mode)
+    log.info(`[ACTION] ${action.type}: ${JSON.stringify(action)}`);
     
     try {
       // Ensure page is active before any action
       await this.ensurePageActive();
       
+      let result: any;
+      
       switch (action.type) {
         case 'navigate':
-          await this.navigate(action as NavigateAction);
+          result = await this.navigate(action as NavigateAction);
           break;
         case 'click':
-          await this.click(action as ClickAction);
+          result = await this.click(action as ClickAction);
           break;
         case 'type':
-          await this.type(action as TypeAction);
+          result = await this.type(action as TypeAction);
           break;
         case 'wait':
-          await this.wait(action as WaitAction);
+          result = await this.wait(action as WaitAction);
           break;
         case 'scroll':
-          await this.scroll(action as ScrollAction);
+          result = await this.scroll(action as ScrollAction);
           break;
         case 'select':
-          await this.select(action as SelectAction);
+          result = await this.select(action as SelectAction);
           break;
         case 'screenshot':
-          await this.screenshot(action as ScreenshotAction);
+          result = await this.screenshot(action as ScreenshotAction);
           break;
         case 'press':
-          await this.press(action as PressAction);
+          result = await this.press(action as PressAction);
           break;
         case 'goBack':
-          await this.goBack(action as GoBackAction);
+          result = await this.goBack(action as GoBackAction);
           break;
         case 'goForward':
-          await this.goForward(action as GoForwardAction);
+          result = await this.goForward(action as GoForwardAction);
           break;
         case 'reload':
-          await this.reload(action as ReloadAction);
+          result = await this.reload(action as ReloadAction);
           break;
         case 'newTab':
-          await this.newTab(action as NewTabAction);
+          result = await this.newTab(action as NewTabAction);
           break;
         case 'switchTab':
-          await this.switchTab(action as SwitchTabAction);
+          result = await this.switchTab(action as SwitchTabAction);
           break;
         case 'closeTab':
-          await this.closeTab(action as CloseTabAction);
+          result = await this.closeTab(action as CloseTabAction);
           break;
         default:
           throw new Error(`Unknown action type: ${(action as any).type}`);
       }
       
+      // Get current page URL after action
+      const pageUrl = await this.getCurrentUrl();
+      
+      // Track performance (similar to MCP mode)
       const duration = Date.now() - startTime;
-      log.performance(`Action ${action.type} completed`, duration);
+      log.info(`[PERFORMANCE] Action ${action.type} completed in ${duration}ms`);
+      
+      // Return enriched result with timing and status
+      return {
+        action,
+        ...result,
+        duration,
+        pageUrl,
+        elementFound: true,
+        success: true
+      };
       
     } catch (error) {
-      log.error(`Failed to execute action: ${action.type}`, error as Error);
-      throw error;
+      const duration = Date.now() - startTime;
+      const pageUrl = await this.getCurrentUrl();
+      log.error(`Action ${action.type} failed after ${duration}ms`, error as Error);
+      
+      // Return error result with timing
+      return {
+        action,
+        duration,
+        pageUrl,
+        elementFound: false,
+        success: false,
+        error: (error as Error).message
+      };
     }
   }
 
@@ -613,12 +645,14 @@ export class BrowserAutomation {
    * Get current page URL
    */
   async getCurrentUrl(): Promise<string> {
-    if (!this.page) {
-      throw new Error('Browser not initialized');
+    try {
+      if (!this.page) return '';
+      return await this.page.url();
+    } catch (error) {
+      log.debug('Failed to get current URL: ' + (error as Error).message);
+      return '';
     }
-    return this.page.url();
   }
-
 
   /**
    * Close browser
@@ -642,15 +676,108 @@ export class BrowserAutomation {
   }
 
   /**
-   * Get the current page instance
+   * Check if browser is running
    */
-  getPage(): Page | null {
-    return this.page;
+  isConnected(): boolean {
+    return !!this.browser && this.browser.isConnected();
   }
 
   /**
-   * Capture browser session state
+   * Debug: analyze modal overlays on current page
    */
+  async debugModalOverlays(): Promise<any> {
+    if (!this.page) {
+      throw new Error('Browser not initialized');
+    }
+
+    return await this.page.evaluate(() => {
+      // Find potential modal elements
+      const modalSelectors = [
+        '[role="dialog"]',
+        '[role="alert"]',
+        '[role="alertdialog"]',
+        '.modal',
+        '.dialog',
+        '.popup',
+        '[class*="modal"]',
+        '[class*="dialog"]',
+        '[class*="overlay"]',
+        'div[style*="z-index"][style*="position: fixed"]',
+        'div[style*="z-index"][style*="position: absolute"]'
+      ];
+      
+      const modals = modalSelectors.flatMap(selector => 
+        Array.from(document.querySelectorAll(selector))
+      );
+      
+      const modalInfo = modals.map(modal => {
+        const style = window.getComputedStyle(modal);
+        const rect = modal.getBoundingClientRect();
+        const isVisible = style.display !== 'none' && 
+                         style.visibility !== 'hidden' && 
+                         parseFloat(style.opacity) > 0 &&
+                         rect.width > 0 && 
+                         rect.height > 0;
+        
+        return {
+          element: modal.tagName.toLowerCase() + 
+                  (modal.id ? `#${modal.id}` : '') + 
+                  (modal.className ? `.${modal.className.split(' ').filter(c => c).join('.')}` : ''),
+          visible: isVisible,
+          display: style.display,
+          visibility: style.visibility,
+          opacity: style.opacity,
+          position: style.position,
+          zIndex: style.zIndex,
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left,
+          innerHTML: modal.innerHTML.substring(0, 100) + '...'
+        };
+      });
+      
+      // Also check for inputs and their state
+      const inputs = Array.from(document.querySelectorAll('input[type="text"], input[type="email"], input[type="password"], input:not([type])'));
+      const inputInfo = inputs.map(input => {
+        const inputEl = input as HTMLInputElement;
+        const style = window.getComputedStyle(inputEl);
+        const rect = inputEl.getBoundingClientRect();
+        const isInteractable = style.display !== 'none' && 
+                              style.visibility !== 'hidden' && 
+                              !inputEl.disabled &&
+                              rect.width > 0 && 
+                              rect.height > 0;
+        
+        return {
+          selector: inputEl.tagName.toLowerCase() + 
+                   (inputEl.id ? `#${inputEl.id}` : '') + 
+                   (inputEl.name ? `[name="${inputEl.name}"]` : '') +
+                   (inputEl.type ? `[type="${inputEl.type}"]` : ''),
+          interactable: isInteractable,
+          disabled: inputEl.disabled,
+          readOnly: inputEl.readOnly,
+          display: style.display,
+          visibility: style.visibility,
+          zIndex: style.zIndex,
+          position: style.position,
+          placeholder: inputEl.placeholder,
+          value: inputEl.value
+        };
+      });
+      
+      return {
+        modals: modalInfo,
+        visibleModalCount: modalInfo.filter(m => m.visible).length,
+        inputs: inputInfo,
+        interactableInputCount: inputInfo.filter(i => i.interactable).length,
+        documentReadyState: document.readyState,
+        activeElement: document.activeElement?.tagName + 
+                      (document.activeElement?.id ? `#${document.activeElement.id}` : '')
+      };
+    });
+  }
+
   async captureSessionState(): Promise<{
     cookies: any[];
     localStorage: Record<string, string>;
@@ -877,12 +1004,43 @@ export class BrowserAutomation {
       
       // Log key page information
       const pageInfo = await this.page!.evaluate(() => {
+        // Check for actually visible modals
+        const modalSelectors = '[role="dialog"], .modal, .popup, .overlay, [class*="modal"], [id*="modal"]';
+        const modals = Array.from(document.querySelectorAll(modalSelectors));
+        
+        // Filter for actually visible modals
+        const visibleModals = modals.filter(modal => {
+          const style = window.getComputedStyle(modal);
+          const rect = modal.getBoundingClientRect();
+          const isVisible = style.display !== 'none' && 
+                           style.visibility !== 'hidden' && 
+                           style.opacity !== '0' &&
+                           rect.width > 0 && 
+                           rect.height > 0;
+          return isVisible;
+        });
+        
+        // Collect modal debug info
+        const modalDebugInfo = visibleModals.map(modal => ({
+          selector: modal.tagName.toLowerCase() + 
+                   (modal.id ? `#${modal.id}` : '') + 
+                   (modal.className ? `.${modal.className.split(' ').join('.')}` : ''),
+          display: window.getComputedStyle(modal).display,
+          visibility: window.getComputedStyle(modal).visibility,
+          opacity: window.getComputedStyle(modal).opacity,
+          zIndex: window.getComputedStyle(modal).zIndex,
+          position: window.getComputedStyle(modal).position,
+          dimensions: `${modal.getBoundingClientRect().width}x${modal.getBoundingClientRect().height}`
+        }));
+        
         return {
           title: document.title,
           url: window.location.href,
           readyState: document.readyState,
           hasCaptcha: !!document.querySelector('[class*="captcha"], [id*="captcha"], iframe[src*="recaptcha"], iframe[src*="hcaptcha"]'),
-          hasModal: !!document.querySelector('[role="dialog"], .modal, .popup'),
+          hasModal: visibleModals.length > 0,
+          modalCount: visibleModals.length,
+          modalDebugInfo: modalDebugInfo,
           formCount: document.querySelectorAll('form').length,
           inputCount: document.querySelectorAll('input, textarea, select').length,
           buttonCount: document.querySelectorAll('button, input[type="submit"], input[type="button"]').length
@@ -911,4 +1069,36 @@ export class BrowserAutomation {
       return { success: false, context };
     }
   }
-} 
+
+  /**
+   * Debug method to check for blocking elements on the page
+   */
+  async debugPageBlockers(): Promise<any> {
+    return await this.page!.evaluate(() => {
+      const modalSelectors = '[role="dialog"], .modal, .popup, .overlay, [class*="modal"], [id*="modal"]';
+      const allModals = Array.from(document.querySelectorAll(modalSelectors));
+      
+      const modalInfo = allModals.map(modal => {
+        const style = window.getComputedStyle(modal);
+        const rect = modal.getBoundingClientRect();
+        const isVisible = style.display !== 'none' && 
+                         style.visibility !== 'hidden' && 
+                         style.opacity !== '0' &&
+                         rect.width > 0 && 
+                         rect.height > 0;
+        
+        return {
+          element: modal.tagName.toLowerCase() + 
+                  (modal.id ? `#${modal.id}` : ''),
+          visible: isVisible
+        };
+      });
+      
+      return {
+        modals: modalInfo,
+        count: modalInfo.length,
+        visibleCount: modalInfo.filter(m => m.visible).length
+      };
+    });
+  }
+}

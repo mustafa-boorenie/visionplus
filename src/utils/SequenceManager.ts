@@ -503,4 +503,119 @@ export class SequenceManager {
       throw error;
     }
   }
+
+  /**
+   * Extract argument placeholders from a sequence
+   * Looks for patterns like {patientName} or ${patientName}
+   */
+  extractArgumentsFromSequence(sequence: AutomationSequence): string[] {
+    const placeholders = new Set<string>();
+    
+    // Check in original prompt
+    const promptMatches = sequence.originalPrompt.match(/\{(\w+)\}|\$\{(\w+)\}/g) || [];
+    promptMatches.forEach((match: string) => {
+      const argName = match.replace(/[\{\}$]/g, '');
+      placeholders.add(argName);
+    });
+    
+    // Check in all action selectors and text values
+    const checkActionForPlaceholders = (action: any) => {
+      // Check selector arrays
+      if (Array.isArray(action.selector)) {
+        action.selector.forEach((sel: string) => {
+          const matches = sel.match(/\{(\w+)\}|\$\{(\w+)\}/g) || [];
+          matches.forEach((match: string) => {
+            const argName = match.replace(/[\{\}$]/g, '');
+            placeholders.add(argName);
+          });
+        });
+      } else if (typeof action.selector === 'string') {
+        const matches = action.selector.match(/\{(\w+)\}|\$\{(\w+)\}/g) || [];
+        matches.forEach((match: string) => {
+          const argName = match.replace(/[\{\}$]/g, '');
+          placeholders.add(argName);
+        });
+      }
+      
+      // Check text values
+      if (action.text) {
+        const matches = action.text.match(/\{(\w+)\}|\$\{(\w+)\}/g) || [];
+        matches.forEach((match: string) => {
+          const argName = match.replace(/[\{\}$]/g, '');
+          placeholders.add(argName);
+        });
+      }
+      
+      // Check value field
+      if (action.value) {
+        const matches = action.value.match(/\{(\w+)\}|\$\{(\w+)\}/g) || [];
+        matches.forEach((match: string) => {
+          const argName = match.replace(/[\{\}$]/g, '');
+          placeholders.add(argName);
+        });
+      }
+    };
+    
+    // Check all actions in the script
+    if (sequence.script && sequence.script.actions) {
+      sequence.script.actions.forEach(action => {
+        checkActionForPlaceholders(action);
+      });
+    }
+    
+    return Array.from(placeholders);
+  }
+  
+  /**
+   * Substitute arguments in a sequence
+   * Replaces all occurrences of {argName} or ${argName} with the provided value
+   */
+  substituteArgumentsInSequence(
+    sequence: AutomationSequence, 
+    args: Record<string, string>
+  ): AutomationSequence {
+    // Deep clone the sequence to avoid mutations
+    const clonedSequence = JSON.parse(JSON.stringify(sequence));
+    
+    // Helper function to replace placeholders
+    const replacePlaceholders = (str: string): string => {
+      let result = str;
+      Object.entries(args).forEach(([key, value]) => {
+        const regex = new RegExp(`\\{${key}\\}|\\$\\{${key}\\}`, 'gi');
+        result = result.replace(regex, value);
+      });
+      return result;
+    };
+    
+    // Replace in original prompt
+    clonedSequence.originalPrompt = replacePlaceholders(clonedSequence.originalPrompt);
+    
+    // Replace in all actions
+    if (clonedSequence.script && clonedSequence.script.actions) {
+      clonedSequence.script.actions = clonedSequence.script.actions.map((action: any) => {
+        const newAction = { ...action };
+        
+        // Replace in selector arrays
+        if (Array.isArray(newAction.selector)) {
+          newAction.selector = newAction.selector.map((sel: string) => replacePlaceholders(sel));
+        } else if (typeof newAction.selector === 'string') {
+          newAction.selector = replacePlaceholders(newAction.selector);
+        }
+        
+        // Replace in text
+        if (newAction.text) {
+          newAction.text = replacePlaceholders(newAction.text);
+        }
+        
+        // Replace in value
+        if (newAction.value) {
+          newAction.value = replacePlaceholders(newAction.value);
+        }
+        
+        return newAction;
+      });
+    }
+    
+    return clonedSequence;
+  }
 } 

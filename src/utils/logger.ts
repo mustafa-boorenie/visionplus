@@ -67,16 +67,43 @@ export interface StepLogContext {
 }
 
 /**
+ * Mask sensitive data in action objects for logging
+ */
+function maskSensitiveAction(action: any): any {
+  if (!action) return action;
+  
+  // Deep clone to avoid mutating original
+  const maskedAction = JSON.parse(JSON.stringify(action));
+  
+  // Mask password fields in type actions
+  if (maskedAction.type === 'type' && maskedAction.text) {
+    // Check if selector indicates password field
+    const isPasswordField = 
+      (typeof maskedAction.selector === 'string' && maskedAction.selector.includes('password')) ||
+      (Array.isArray(maskedAction.selector) && maskedAction.selector.some((s: string) => s.includes('password')));
+    
+    if (isPasswordField) {
+      maskedAction.text = '[MASKED]';
+    }
+  }
+  
+  return maskedAction;
+}
+
+/**
  * Log detailed step execution
  */
 function logStep(context: StepLogContext): void {
   const prefix = `[STEP ${context.stepIndex}/${context.totalSteps}]`;
   
+  // Mask sensitive data in action for logging
+  const maskedAction = maskSensitiveAction(context.action);
+  
   if (context.error) {
     console.error(
       chalk.red(`${prefix} ❌ ${context.stepDescription}`),
       {
-        action: context.action,
+        action: maskedAction,
         error: context.error,
         retryCount: context.retryCount,
         pageUrl: context.pageUrl,
@@ -87,7 +114,7 @@ function logStep(context: StepLogContext): void {
     console.info(
       chalk.green(`${prefix} ✓ ${context.stepDescription}`),
       {
-        action: context.action,
+        action: maskedAction,
         duration: context.duration,
         pageUrl: context.pageUrl,
         elementFound: context.elementFound

@@ -1,0 +1,141 @@
+{
+  "metadata": {
+    "id": "3bd235fc-4da5-4938-9dbd-5cfd51f8e176",
+    "name": "checkInDemo",
+    "description": "Interactive session with 4 commands. Context: {\"startUrl\":\"https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp\",\"credentials\":{\"username\":\"mustafa.boorenie\",\"password\":\"MedicineforMufasaTX$2\"},\"arguments\":{\"patientName\":\"Test, Mustafa Jr\",\"DOB\":\"07/01/2024\",\"Facility\":\"Pediatric Clear Lake\"}}",
+    "createdAt": "2025-07-25T21:58:10.041Z",
+    "usageCount": 0,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100
+  },
+  "originalPrompt": "1. 1/ enter username in text field  2/ click next 3/ enter password in text field / click next\n2. press esc twice\n3. click close on pop-up/modal\n4. 1/ find the row with ${patientName}  2/ click on visit status column on patient row",
+  "script": {
+    "name": "checkInDemo",
+    "description": "Interactive session: 4 commands",
+    "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[name='username']",
+          "input#username",
+          "[aria-label='Username']",
+          "[placeholder='Enter username']",
+          "input[type='text']"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button[type='submit']",
+          "button[aria-label='Next']",
+          "#next-button",
+          "[role='button']:has-text('Next')"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[name='password']",
+          "input#password",
+          "[aria-label='Password']",
+          "[placeholder='Enter password']",
+          "input[type='password']"
+        ],
+        "text": "[hidden]"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button[type='submit']",
+          "button[aria-label='Next']",
+          "#next-button",
+          "[role='button']:has-text('Next')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": []
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button.close-button",
+          "div.modal-header button[aria-label='Close']",
+          "div.modal-content button:has-text('Close')",
+          "button[data-testid='close-popup']"
+        ]
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          ".tracking-board-table",
+          "table[role='table']"
+        ]
+      },
+      {
+        "type": "scroll",
+        "direction": "down",
+        "amount": 500,
+        "selector": [
+          "tr:has(td:has-text('Test, Mustafa Jr'))"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "tr:has(td:has-text('Test, Mustafa Jr')) td.visit-status",
+          "td.visit-status:has-text('Test, Mustafa Jr')",
+          "td:has-text('Test, Mustafa Jr') + td.visit-status"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-25T21:58:10.041Z",
+      "success": true,
+      "executionTime": 94079,
+      "errors": []
+    }
+  ]
+}

@@ -65,7 +65,7 @@ export class SelectorSuggester {
    * Analyze page structure for the given action
    */
   private async analyzePage(actionType: string, context: string): Promise<any> {
-    const analysis = await this.page.evaluate(() => {
+    const analysis = await this.page.evaluate(([actionType, context]) => {
       // Helper to extract element info
       const getElementInfo = (element: Element) => ({
         tagName: element.tagName.toLowerCase(),
@@ -149,11 +149,24 @@ export class SelectorSuggester {
         pageInfo: {
           title: document.title,
           url: window.location.href,
-          hasModals: document.querySelector('[role="dialog"], .modal, .popup') !== null,
+          hasModals: (() => {
+            const modalSelectors = '[role="dialog"], .modal, .popup, .overlay, [class*="modal"], [id*="modal"]';
+            const modals = Array.from(document.querySelectorAll(modalSelectors));
+            const visibleModals = modals.filter(modal => {
+              const style = window.getComputedStyle(modal);
+              const rect = modal.getBoundingClientRect();
+              return style.display !== 'none' && 
+                     style.visibility !== 'hidden' && 
+                     style.opacity !== '0' &&
+                     rect.width > 0 && 
+                     rect.height > 0;
+            });
+            return visibleModals.length > 0;
+          })(),
           isLoading: document.querySelector('.loading, .spinner, [aria-busy="true"]') !== null
         }
       };
-    });
+    }, [actionType, context]);
 
     return analysis;
   }
@@ -286,7 +299,20 @@ export class SelectorSuggester {
   }> {
     const pageState = await this.page.evaluate(() => {
       return {
-        hasModals: document.querySelector('[role="dialog"], .modal, .popup') !== null,
+        hasModals: (() => {
+          const modalSelectors = '[role="dialog"], .modal, .popup, .overlay, [class*="modal"], [id*="modal"]';
+          const modals = Array.from(document.querySelectorAll(modalSelectors));
+          const visibleModals = modals.filter(modal => {
+            const style = window.getComputedStyle(modal);
+            const rect = modal.getBoundingClientRect();
+            return style.display !== 'none' && 
+                   style.visibility !== 'hidden' && 
+                   style.opacity !== '0' &&
+                   rect.width > 0 && 
+                   rect.height > 0;
+          });
+          return visibleModals.length > 0;
+        })(),
         hasOverlays: document.querySelector('.overlay, .backdrop') !== null,
         isLoading: document.querySelector('.loading, .spinner, [aria-busy="true"]') !== null,
         hasCookieBanner: document.querySelector('[class*="cookie"], [id*="cookie"], [aria-label*="cookie"]') !== null,

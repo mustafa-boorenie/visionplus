@@ -279,7 +279,10 @@ program
 
         // Import and run the automation
         const { IntelligentAutomation } = await import('../automation/IntelligentAutomation');
-        const automation = new IntelligentAutomation(sequence.originalPrompt, true);
+        const { BrowserManager } = await import('../browser/BrowserManager');
+        const browserManager = BrowserManager.getInstance();
+        const browser = await browserManager.getBrowser();
+        const automation = new IntelligentAutomation(browser, sequence.originalPrompt, true, false);
         
         const startTime = Date.now();
         

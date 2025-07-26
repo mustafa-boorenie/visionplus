@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "id": "ab3ab247-41f0-44a8-9243-9c745eb61a5a",
+    "name": "bcbs-demo",
+    "description": "Interactive session with 6 commands. Context: {\"startUrl\":\"https://www.bcbstx.com/provider\"}",
+    "createdAt": "2025-07-26T17:55:14.421Z",
+    "usageCount": 0,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100
+  },
+  "originalPrompt": "1. click on network participation\n2. click on how to join our networks\n3. click this link https://www.bcbstx.com/provider/network/network/credentialing-office-phys-pro\n4. click the link named 'provider data portal'\n5. switch tabs to CAQH ProView - Sign In\n6. input mustafa.boorenie in username text field",
+  "script": {
+    "name": "bcbs-demo",
+    "description": "Interactive session: 6 commands",
+    "url": "https://www.bcbstx.com/provider",
+    "actions": [
+      {
+        "type": "click",
+        "selector": [
+          "text=Network Participation",
+          "a:has-text('Network Participation')",
+          "[href='/provider/network-participation']"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "a:has-text('How to join our networks')",
+          "[data-testid='how-to-join']",
+          "a[href*='join-networks']",
+          "a[role='link']:has-text('How to join our networks')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://www.bcbstx.com/provider/network/network/credentialing-office-phys-pro"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "a:has-text('provider data portal')",
+          "a[href*='provider-data-portal']",
+          "a[role='link']:has-text('provider data portal')",
+          "a:contains('provider data portal')",
+          "a"
+        ]
+      },
+      {
+        "type": "switchTab",
+        "title": "CAQH ProView - Sign In"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input#username",
+          "input[name='username']",
+          "input[placeholder='Username']",
+          "[role='textbox'][aria-label='Username']"
+        ],
+        "text": "mustafa.boorenie"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-26T17:55:14.421Z",
+      "success": true,
+      "executionTime": 22029,
+      "errors": []
+    }
+  ]
+}

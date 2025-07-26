@@ -94,6 +94,69 @@ export class ScriptRunner {
   }
 
   /**
+   * Run an automation sequence with its defined URL
+   * This ensures sequences always use their stored URL, not the current browser state
+   */
+  async runSequence(sequence: AutomationScript): Promise<void> {
+    log.info(`Starting sequence: ${sequence.name}`);
+    
+    try {
+      // Initialize browser
+      await this.browser.initialize();
+
+      // Always navigate to the sequence's URL first
+      if (sequence.url) {
+        log.info(`Navigating to sequence URL: ${sequence.url}`);
+        await this.browser.executeAction({
+          type: 'navigate',
+          url: sequence.url
+        });
+        
+        // Wait for page to load
+        await this.browser.executeAction({
+          type: 'wait',
+          duration: 2000
+        });
+      }
+
+      // Execute all actions in the sequence
+      for (let i = 0; i < sequence.actions.length; i++) {
+        const action = sequence.actions[i];
+        log.info(`Executing action ${i + 1}/${sequence.actions.length}: ${action.type}`);
+
+        try {
+          await this.browser.executeAction(action);
+
+          // Take screenshot after action if it's a screenshot action
+          if (action.type === 'screenshot') {
+            const screenshotPath = await this.browser.takeScreenshot(action.name, action.options);
+            
+            // Analyze if enabled
+            if (this.script.analysis?.enabled && this.script.analysis.prompts.length > 0) {
+              const prompt = this.script.analysis.prompts[i % this.script.analysis.prompts.length];
+              const analysis = await this.analyzeScreenshot(screenshotPath, prompt);
+              this.resultsHandler.addScreenshot(action.name, screenshotPath, analysis);
+            } else {
+              this.resultsHandler.addScreenshot(action.name, screenshotPath);
+            }
+          }
+        } catch (error) {
+          log.error(`Action ${i + 1} failed: ${error}`);
+          throw error;
+        }
+      }
+
+      log.info(`Sequence completed: ${sequence.name}`);
+      
+    } catch (error) {
+      log.error(`Sequence failed: ${sequence.name}`, error as Error);
+      throw error;
+    } finally {
+      await this.browser.close();
+    }
+  }
+
+  /**
    * Analyze a screenshot
    */
   private async analyzeScreenshot(

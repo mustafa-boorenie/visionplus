@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "id": "6e6d1e7e-a208-4b4e-bc7e-1f7a12136d3d",
+    "name": "socks",
+    "description": "Automation for: ",
+    "createdAt": "2025-07-24T04:01:51.564Z",
+    "usageCount": 0,
+    "tags": [],
+    "successRate": 100
+  },
+  "originalPrompt": "",
+  "script": {
+    "name": "socks",
+    "description": "",
+    "url": "",
+    "actions": []
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-24T04:01:51.564Z",
+      "success": true,
+      "executionTime": 0
+    }
+  ]
+}

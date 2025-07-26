@@ -1,0 +1,373 @@
+{
+  "metadata": {
+    "id": "46cad109-1352-42a6-bebc-9c93fa3b3270",
+    "name": "checkInPatient",
+    "description": "Interactive automation session with 13 commands",
+    "createdAt": "2025-07-25T21:10:17.939Z",
+    "usageCount": 3,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100,
+    "lastUsed": "2025-07-25T21:12:06.830Z"
+  },
+  "originalPrompt": "1. input mustafa.boorenie in text field\n2. click on next to continue\n3. input mustafa.boorenie in text field\n4. input mustafa.boorenie in text field\n5. click next button\n6. 1/ input mustafa.boorenie in text field 2/ click next button 3/ input MedicineforMufasaTX$2 in text field 4/ press enter\n7. click escape twice\n8. hover over 'S' link on top right side of page\n9. press dropdown button in provider input field\n10. find patient Test, Mustafa Jr and click on visit status cell on the same row\n11. click on \"ARR(Arrived)\n12. find patient Test, Mustafa Jr and click on visit status cell on the same row. Once done, click on ARR (Arrived) in dropdown menu that appears\n13. find patient Test, Mustafa Jr and click on visit status cell on the same row",
+  "script": {
+    "name": "checkInPatient",
+    "description": "Interactive session: 13 commands",
+    "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "input[type='text']"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[type='text']",
+          "input[name='username']",
+          "input[placeholder='Username']"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          "[role='button']:has-text('Next')",
+          "button[id='nextButton']",
+          "button[class='btn btn-next']"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "[role='button']:has-text('Next')",
+          "button[id='nextButton']",
+          "button[class='btn btn-next']"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": [
+          "#username",
+          "[name='username']",
+          "[role='textbox']:has-text('Username')"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "#username",
+          "[name='username']",
+          "[role='textbox']:has-text('Username')"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          "input[name='username']",
+          "input[id='username']",
+          "[role='textbox']",
+          "input[type='text']"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[name='username']",
+          "input[id='username']",
+          "[role='textbox']",
+          "input[type='text']"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": [
+          "button[type='submit']:has-text('Next')",
+          "button[aria-label='Next']",
+          "[role='button']:has-text('Next')"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button[type='submit']:has-text('Next')",
+          "button[aria-label='Next']",
+          "[role='button']:has-text('Next')"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp"
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[type='text']",
+          "input[placeholder='Username']",
+          "[name='username']"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button[type='submit']",
+          "[name='next']",
+          "button:has-text('Next')"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[type='password']",
+          "input[placeholder='Password']",
+          "[name='password']"
+        ],
+        "text": "MedicineforMufasaTX$2"
+      },
+      {
+        "type": "press",
+        "selector": [
+          "input[type='password']",
+          "input[placeholder='Password']",
+          "[name='password']"
+        ],
+        "key": "Enter"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "body"
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 1000,
+        "selector": [
+          "[role='combobox']:has-text('Provider')",
+          "input[name='provider']",
+          "[data-testid='provider-input']"
+        ]
+      },
+      {
+        "type": "click",
+        "selector": [
+          "[role='button']:has-text('Dropdown')",
+          "[data-testid='provider-dropdown']",
+          "#provider-dropdown-button"
+        ]
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "table"
+      },
+      {
+        "type": "scroll",
+        "direction": "down",
+        "amount": 500,
+        "selector": "tr:has(td:has-text('Test, Mustafa Jr'))"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "tr:has(td:has-text('Test, Mustafa Jr')) td.visit-status",
+          "tr:has(td:has-text('Test, Mustafa Jr')) td:nth-child(3)",
+          "tr:has-text('Test, Mustafa Jr') td:not(:first-child)"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 3000,
+        "selector": ".tracking-board-class"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button:has-text('ARR(Arrived)')",
+          "div:has-text('ARR')",
+          "span:has-text('Arrived')",
+          ".status-button-class",
+          "[data-status='ARR']"
+        ]
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": ".patient-records-table"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "tr:has(td:has-text('Test, Mustafa Jr.'))"
+      },
+      {
+        "type": "click",
+        "selector": "tr:has(td:has-text('Test, Mustafa Jr.')) td.visit-status-cell"
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "wait",
+        "duration": 1000,
+        "selector": ".dropdown-menu"
+      },
+      {
+        "type": "click",
+        "selector": ".dropdown-menu .option:has-text('ARR (Arrived)')"
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "navigate",
+        "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/index.jsp#/mobiledoc/jsp/webemr/scheduling/trackingBoard/trackingBoard.jsp"
+      },
+      {
+        "type": "wait",
+        "duration": 2000,
+        "selector": "[role='table']"
+      },
+      {
+        "type": "scroll",
+        "direction": "down",
+        "amount": 500,
+        "selector": "[role='row']"
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      },
+      {
+        "type": "click",
+        "selector": [
+          "tr:has(td:has-text('Test, Mustafa Jr')) td[role='cell']:has-text('Visit Status')",
+          "[role='row']:has(td:has-text('Test, Mustafa Jr')) td[role='cell']:nth-child(4)",
+          "td:has-text('Test, Mustafa Jr') ~ td[role='cell']"
+        ]
+      },
+      {
+        "type": "wait",
+        "duration": 2000
+      },
+      {
+        "type": "wait",
+        "duration": 1000
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-25T21:10:17.939Z",
+      "success": true,
+      "executionTime": 440323,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-25T21:10:57.585Z",
+      "success": true,
+      "executionTime": 27496,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-25T21:11:31.067Z",
+      "success": true,
+      "executionTime": 35209,
+      "errors": []
+    },
+    {
+      "timestamp": "2025-07-25T21:12:06.830Z",
+      "success": true,
+      "executionTime": 32936,
+      "errors": []
+    }
+  ]
+}

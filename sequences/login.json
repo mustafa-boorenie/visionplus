@@ -1,0 +1,71 @@
+{
+  "metadata": {
+    "id": "bcf0f647-fbc0-4ff9-bf05-56e487da89c5",
+    "name": "login",
+    "description": "Interactive session with 4 commands. Context: {\"startUrl\":\"https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp\"}",
+    "createdAt": "2025-07-26T07:18:16.730Z",
+    "usageCount": 0,
+    "tags": [
+      "session",
+      "multi-command"
+    ],
+    "category": "interactive-session",
+    "successRate": 100
+  },
+  "originalPrompt": "1. input mustafa.boorenie into text field\n2. click next\n3. input MedicineforMufasaTX$2 for password\n4. press log in",
+  "script": {
+    "name": "login",
+    "description": "Interactive session: 4 commands",
+    "url": "https://txclstf6p3vy7rz5judqcxapp.ecwcloud.com/mobiledoc/jsp/webemr/login/newLogin.jsp",
+    "actions": [
+      {
+        "type": "type",
+        "selector": [
+          "#username",
+          "[name='username']",
+          "input[placeholder='Enter your username']",
+          "[role='textbox']",
+          "input[type='text']"
+        ],
+        "text": "mustafa.boorenie"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button:has-text('Next')",
+          "input[name='next']",
+          "button[type='button'][data-testid='next-button']",
+          "button[aria-label='Next']",
+          "button[class='next']"
+        ]
+      },
+      {
+        "type": "type",
+        "selector": [
+          "input[type='password']",
+          "input[name='password']",
+          "input#password",
+          "[aria-label='Password']"
+        ],
+        "text": "MedicineforMufasaTX$2"
+      },
+      {
+        "type": "click",
+        "selector": [
+          "button[type='submit']",
+          "button:has-text('Log In')",
+          "[role='button']:has-text('Log In')",
+          "[data-testid='login-button']"
+        ]
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-07-26T07:18:16.730Z",
+      "success": true,
+      "executionTime": 10405,
+      "errors": []
+    }
+  ]
+}

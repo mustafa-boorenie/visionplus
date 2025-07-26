@@ -2,6 +2,9 @@ import { Config } from './utils/config';
 
 // Main exports
 export { BrowserAutomation } from './browser/BrowserAutomation';
+export { MCPBrowserAutomation } from './browser/MCPBrowserAutomation';
+export { MCPClient } from './browser/MCPClient';
+export { BrowserManager } from './browser/BrowserManager';
 export { VisionAnalyzer } from './vision/VisionAnalyzer';
 export { ScriptRunner } from './ScriptRunner';
 export { ResultsHandler } from './utils/ResultsHandler';

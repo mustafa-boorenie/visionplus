@@ -1,0 +1,32 @@
+import { test, expect } from '@playwright/test';
+import { chromium, firefox, webkit } from '@playwright/test';
+
+// Helper function to retry actions
+async function retryAction(action: () => Promise<void>, retries = 3): Promise<void> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      await action();
+      return;
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+}
+
+test.describe('intelligent-automation', () => {
+  test('go to bcbs provider portal', async ({ page }) => {
+    // Set timeout for this test
+    test.setTimeout(60000);
+
+    // Navigate to https://www.bcbs.com/providers
+    await page.goto('https://www.bcbs.com/providers');
+
+    // Step 1: Navigate to https://www.bcbs.com/providers
+    await page.goto('https://www.bcbs.com/providers');
+    await expect(page).toHaveURL('https://www.bcbs.com/providers');
+
+    // Verify test completed successfully
+    await expect(page).toHaveURL(/./);
+  });
+});

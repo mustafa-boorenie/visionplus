@@ -13,6 +13,7 @@ import path from 'path';
 import chalk from 'chalk';
 import { SelectorSuggester } from './SelectorSuggester';
 import { RecoveryPromptSystem } from './RecoveryPromptSystem';
+import { IBrowserAutomation } from '../types';
 
 /**
  * Task step representing a single automation action
@@ -29,8 +30,8 @@ interface TaskStep {
  */
 export class IntelligentAutomation {
   private openai: OpenAI;
-  private browser: BrowserAutomation;
   private vision: VisionAnalyzer;
+  private browser: IBrowserAutomation;
   private vectorStore: VectorStore;
   private currentScript: AutomationScript;
   private taskSteps: TaskStep[] = [];
@@ -40,23 +41,30 @@ export class IntelligentAutomation {
   private executionStartTime: number = 0;
   private screenshots: string[] = [];
   private executionErrors: string[] = [];
+  private verbose: boolean;
+  private persistBrowser: boolean;
   
   constructor(
-    taskPrompt: string, 
-    private verbose: boolean = false,
-    private persistBrowser: boolean = false
-  ) {
-    this.openai = new OpenAI({ apiKey: Config.OPENAI_API_KEY });
+    browserAutomation: IBrowserAutomation,
+    private taskPrompt: string,
+    verbose: boolean = false,
+    persistBrowser: boolean = false,
+    ) {
+    const apiKey = Config.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENAI_API_KEY is not set in the environment variables.");
+    }
+    this.openai = new OpenAI({ apiKey });
+    this.browser = browserAutomation;
     this.vision = new VisionAnalyzer();
+    this.verbose = verbose;
+    this.persistBrowser = persistBrowser;
     this.vectorStore = new VectorStore();
     this.progress = new ProgressTracker(this.verbose);
     
-    // Browser will be initialized during execute()
-    this.browser = null as any;
-    
     this.currentScript = {
       name: 'intelligent-automation',
-      description: taskPrompt,
+      description: '', // Will be set during execution
       url: '',
       actions: []
     };
@@ -89,8 +97,9 @@ export class IntelligentAutomation {
       
       await this.vectorStore.initialize();
       
-      // Set the URL in the current script
+      // Set the URL and description in the current script
       this.currentScript.url = startUrl;
+      this.currentScript.description = this.taskPrompt;
       
       // Load cached script if available
       // TEMPORARILY DISABLED: Cache is returning incorrect scripts
@@ -117,7 +126,7 @@ export class IntelligentAutomation {
       await this.cacheScript();
 
       // Generate Playwright test
-      await this.generateTest();
+      const generatedTestPath = await this.generateTest();
 
       // Display summary
       this.progress.displaySummary(true);
@@ -127,7 +136,7 @@ export class IntelligentAutomation {
       await this.progress.exportLog(logPath);
 
       // Return successful execution result
-      return this.getExecutionResult(true);
+      return this.getExecutionResult(true, generatedTestPath);
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -151,7 +160,7 @@ export class IntelligentAutomation {
   /**
    * Get execution result for saving as sequence
    */
-  private getExecutionResult(success: boolean): AutomationExecutionResult {
+  private getExecutionResult(success: boolean, generatedTestPath?: string): AutomationExecutionResult {
     const executionTime = Date.now() - this.executionStartTime;
     
     const stepResults = this.taskSteps.map(step => ({
@@ -163,15 +172,12 @@ export class IntelligentAutomation {
 
     return {
       success,
-      script: {
-        ...this.currentScript,
-        name: this.currentScript.name || 'automation',
-        description: this.currentScript.description || 'Generated automation'
-      },
+      script: this.currentScript,
       executionTime,
       screenshots: this.screenshots,
       errors: this.executionErrors,
-      stepResults
+      stepResults,
+      testFile: generatedTestPath || undefined
     };
   }
 
@@ -203,6 +209,12 @@ export class IntelligentAutomation {
       
             Prefer ID selectors over class selectors when available.
             Use data-testid attributes if present.
+            
+            Common navigation patterns:
+            - "go to google" → navigate to https://www.google.com
+            - "go to amazon" → navigate to https://www.amazon.com
+            - "navigate to [site]" → navigate to the appropriate URL
+            - "open [website]" → navigate to the website
             
             For Google search, use these specific selectors:
             - Search box: textarea[name="q"] or #APjFqb
@@ -262,13 +274,30 @@ export class IntelligentAutomation {
             role: 'user',
             content: `Break down this task into specific browser automation steps:
             Task: ${this.currentScript.description}
-            Starting URL: ${this.currentScript.url}
+            Current URL: ${this.currentScript.url}
+            
+            Context: The browser is currently on this page. Include navigation steps when the user explicitly asks to go somewhere (e.g., "go to google", "navigate to website.com").
+            
+            IMPORTANT: Extract and use exact values from the task description:
+            - If the task mentions specific text to type (e.g., "type 'mustafa.boorenie'"), use "mustafa.boorenie" as the exact value
+            - If the task mentions specific values, IDs, or data, use those exact values
+            - Only use placeholders when the task itself uses generic terms
+            - DO NOT mask or hide sensitive values like passwords - use the exact values provided in the task
+            - If a password is provided in the task, use it as-is in the 'value' field, do not replace it with [hidden] or any other placeholder
+            - If the task explicitly asks to navigate somewhere (e.g., "go to google", "navigate to amazon"), then add a navigation step
+            - If the task is about interacting with the current page, don't add unnecessary navigation steps
+            
+            For example:
+            - Task: "type 'john.doe' in username field" → Use exact value "john.doe"
+            - Task: "go to the text field and type 'mustafa.boorenie'" → Type exact value "mustafa.boorenie"
+            - Task: "search for product ABC123" → Use "ABC123" in the action
+            - Task: "enter password MyPass123!" → Use exact value "MyPass123!"
             
             Return a JSON array of steps, each with:
             - description: what to do
             - actionType: navigate|click|type|scroll|wait|screenshot|press|goBack|goForward|reload|newTab|switchTab|closeTab
             - selector: CSS selector if needed (be specific and use reliable selectors)
-            - value: text to type or URL to navigate to
+            - value: text to type or URL to navigate to (use exact values, do not mask passwords)
             - waitTime: milliseconds to wait if needed
             - url: URL for newTab or switchTab actions
             - title: title pattern for switchTab action
@@ -281,6 +310,14 @@ export class IntelligentAutomation {
 
       const stepsData = JSON.parse(response.choices[0].message.content || '{"steps": []}');
       
+      // Validate and warn about masked values
+      stepsData.steps.forEach((step: any) => {
+        if (step.value === '[hidden]' || step.value === '[HIDDEN]' || step.value === '[masked]' || step.value === '[MASKED]') {
+          log.warn(`[TASK_BREAKDOWN] WARNING: AI returned masked value "${step.value}" for step "${step.description}". This may cause authentication to fail.`);
+          log.warn(`[TASK_BREAKDOWN] The AI should use actual values from the task description, not mask them.`);
+        }
+      });
+      
       // Log the generated steps for debugging
       log.info('[TASK_BREAKDOWN] Generated steps:');
       stepsData.steps.forEach((step: any, index: number) => {
@@ -291,7 +328,13 @@ export class IntelligentAutomation {
         } else if (step.selector) {
           log.info(`[TASK_BREAKDOWN]   Selector: ${step.selector}`);
         }
-        log.info(`[TASK_BREAKDOWN]   Value: ${step.value || 'N/A'}`);
+        // Mask password values in logs only
+        const displayValue = (step.actionType === 'type' && 
+                            (step.selector?.includes('password') || 
+                             step.selectors?.some((s: string) => s.includes('password')))) 
+                            ? '[MASKED]' 
+                            : (step.value || 'N/A');
+        log.info(`[TASK_BREAKDOWN]   Value: ${displayValue}`);
       });
       
       this.taskSteps = stepsData.steps.map((step: any) => ({
@@ -422,10 +465,10 @@ export class IntelligentAutomation {
       const pageUrl = await this.browser.getCurrentUrl();
       const startTime = Date.now();
       
-      // Execute the action
+      // Add action to script BEFORE execution so it's captured even if it fails
       if (step.action) {
-        await this.browser.executeAction(step.action);
         this.currentScript.actions.push(step.action);
+        await this.browser.executeAction(step.action);
       }
 
       // Mark as completed
@@ -489,6 +532,190 @@ export class IntelligentAutomation {
   }
 
   /**
+   * Autonomous recursive recovery - continuously analyzes and adapts
+   */
+  private async autonomousRecovery(
+    step: TaskStep, 
+    stepIndex: number,
+    iteration: number = 0,
+    maxIterations: number = 10
+  ): Promise<boolean> {
+    log.info(`[AUTONOMOUS_RECOVERY] Starting iteration ${iteration + 1}/${maxIterations}`);
+    
+    try {
+      // Capture current page state
+      const screenshotPath = await this.browser.takeHighQualityScreenshot(`autonomous_${stepIndex}_${iteration}`);
+      const pageHTML = await this.browser.getPageHTML();
+      const pageUrl = await this.browser.getCurrentUrl();
+      
+      // Get failure context - may use it later for enhanced analysis
+      await this.browser.captureFailureContext(step.description);
+      
+      log.info('[AUTONOMOUS_RECOVERY] Sending page state to OpenAI for analysis...');
+      
+      // Create comprehensive prompt for OpenAI
+      const analysisPrompt = `You are an autonomous browser automation agent. Analyze the current page state and generate JavaScript code to complete the task.
+
+Task: ${step.description}
+Original Action: ${JSON.stringify(step.action)}
+Current URL: ${pageUrl}
+Iteration: ${iteration + 1}
+
+Page HTML (first 10000 chars):
+${pageHTML.slice(0, 10000)}
+
+IMPORTANT: 
+1. Generate ONLY executable JavaScript code that can run in the browser console
+2. The code should attempt to complete the original task
+3. Include error handling and fallback strategies
+4. If you detect modals/popups, include code to dismiss them
+5. Return the code in a javascript code block
+
+Your code should:
+- First try to dismiss any blocking elements (modals, popups, overlays)
+- Then attempt to complete the original task
+- Include console.log statements to track progress
+- Return a result object indicating success/failure and next steps
+
+Example format:
+\`\`\`javascript
+// Dismiss any modals
+document.querySelectorAll('[class*="modal"], [class*="popup"], [role="dialog"]').forEach(el => {
+  const closeBtn = el.querySelector('[class*="close"], [aria-label*="close"], button:contains("X")');
+  if (closeBtn) closeBtn.click();
+});
+
+// Wait a moment
+await new Promise(resolve => setTimeout(resolve, 500));
+
+// Attempt the main task
+try {
+  // Your task-specific code here
+  console.log('Task completed successfully');
+  return { success: true, message: 'Task completed' };
+} catch (error) {
+  console.log('Task failed:', error);
+  return { success: false, message: error.message, suggestion: 'Try alternative approach' };
+}
+\`\`\``;
+
+      // Send to Vision API with screenshot
+      const visionResponse = await this.vision.analyzeScreenshot({
+        screenshotPath,
+        prompt: analysisPrompt,
+        maxTokens: 1500,
+        temperature: 0.3
+      });
+      
+      // Extract JavaScript code
+      const { OpenAIToolsClient } = await import('../utils/OpenAIToolsClient');
+      const codeBlocks = OpenAIToolsClient.extractJavaScriptCode(visionResponse.content);
+      
+      if (codeBlocks.length === 0) {
+        log.warn('[AUTONOMOUS_RECOVERY] No code found in response, requesting executable code...');
+        
+        // Re-prompt specifically for code
+        const codePrompt = OpenAIToolsClient.generateExecutableCodePrompt(
+          {
+            task: step.description,
+            action: step.action,
+            url: pageUrl,
+            iteration,
+            previousAnalysis: visionResponse.content
+          },
+          visionResponse.content
+        );
+        
+        // Get code-specific response
+        const codeResponse = await this.openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a browser automation expert. Provide ONLY executable JavaScript code.'
+            },
+            {
+              role: 'user',
+              content: codePrompt
+            }
+          ],
+          max_tokens: 1000,
+          temperature: 0.2
+        });
+        
+        const newCodeBlocks = OpenAIToolsClient.extractJavaScriptCode(codeResponse.choices[0].message.content || '');
+        if (newCodeBlocks.length > 0) {
+          codeBlocks.push(...newCodeBlocks);
+        }
+      }
+      
+      // Execute the generated code
+      if (codeBlocks.length > 0) {
+        log.info('[AUTONOMOUS_RECOVERY] Executing generated recovery code...');
+        
+        for (const code of codeBlocks) {
+          try {
+            // First try Escape key
+            await this.browser.executeAction({ type: 'press', key: 'Escape' });
+            await this.browser.executeAction({ type: 'wait', duration: 300 });
+            
+            // Execute the generated code
+            const executorFunction = new Function(`
+              return (async () => { 
+                try {
+                  ${code.replace(/`/g, '\\`')}
+                } catch (error) {
+                  return { success: false, error: error.message };
+                }
+              })();
+            `);
+            
+            const result = await this.browser.evaluate(executorFunction as () => any);
+            
+              log.info(`[AUTONOMOUS_RECOVERY] Code execution result: ${JSON.stringify(result)}`);
+              
+              // Check if the original action now works
+              try {
+                await this.browser.executeAction(step.action!);
+                log.info('[AUTONOMOUS_RECOVERY] Original action succeeded after recovery!');
+                return true; // Success!
+              } catch (retryError) {
+                log.info('[AUTONOMOUS_RECOVERY] Original action still failing, continuing recovery...');
+              }
+            
+            // If result indicates success, return true
+            if (result && typeof result === 'object' && result.success) {
+              log.info('[AUTONOMOUS_RECOVERY] Recovery code reported success');
+              return true;
+            }
+            
+                      } catch (execError) {
+              log.error('[AUTONOMOUS_RECOVERY] Failed to execute recovery code:', execError as Error);
+            }
+        }
+      }
+      
+      // Check if we should continue iterating
+      if (iteration < maxIterations - 1) {
+        log.info('[AUTONOMOUS_RECOVERY] Continuing to next iteration...');
+        
+        // Small delay before next iteration
+        await this.browser.executeAction({ type: 'wait', duration: 1000 });
+        
+        // Recursive call
+        return await this.autonomousRecovery(step, stepIndex, iteration + 1, maxIterations);
+      } else {
+        log.warn('[AUTONOMOUS_RECOVERY] Reached maximum iterations without success');
+        return false;
+      }
+      
+    } catch (error) {
+      log.error('[AUTONOMOUS_RECOVERY] Error in autonomous recovery:', error as Error);
+      return false;
+    }
+  }
+
+  /**
    * Handle step failure with Vision API
    */
   private async handleStepFailure(step: TaskStep, stepIndex: number): Promise<void> {
@@ -501,6 +728,36 @@ export class IntelligentAutomation {
     });
 
     try {
+      // First, try pressing Escape key as a quick fix for modals/popups
+      log.info('[RECOVERY] Attempting Escape key press to dismiss potential modals...');
+      try {
+        await this.browser.executeAction({ type: 'press', key: 'Escape' });
+        await this.browser.executeAction({ type: 'wait', duration: 500 });
+        
+        // Check if the original action works now
+        log.info('[RECOVERY] Retrying original action after Escape key press...');
+        await this.browser.executeAction(step.action!);
+        
+        // If we get here, the action succeeded after pressing Escape
+        log.info('[RECOVERY] Action succeeded after pressing Escape key!');
+        step.completed = true;
+        await this.executeStepsRecursively(stepIndex + 1);
+        return;
+      } catch (escapeError) {
+        // Escape key didn't solve the issue, try autonomous recovery
+        log.info('[RECOVERY] Escape key press did not resolve the issue, trying autonomous recovery...');
+        
+        // Try autonomous recovery before falling back to Vision analysis
+        const recoverySuccess = await this.autonomousRecovery(step, stepIndex);
+        if (recoverySuccess) {
+          step.completed = true;
+          await this.executeStepsRecursively(stepIndex + 1);
+          return;
+        }
+        
+        log.info('[RECOVERY] Autonomous recovery failed, proceeding with Vision analysis...');
+      }
+
       // Capture failure context on first attempt
       const failureContext = await this.browser.captureFailureContext(step.description);
       
@@ -591,6 +848,35 @@ export class IntelligentAutomation {
       // Log the raw analysis content for debugging
       log.info('[VISION] Raw analysis content:');
       log.info(analysis.content);
+      
+      // Send failure context back to OpenAI for better recovery suggestions
+      const recoveryPlan = await this.sendFailureToOpenAI(step, stepIndex, failureContext, screenshotPath);
+      
+      if (recoveryPlan && recoveryPlan.shouldRetry && recoveryPlan.recoverySteps?.length > 0) {
+        log.info('[OPENAI_FEEDBACK] Applying recovery steps from OpenAI');
+        
+        // Insert recovery steps before the current step
+        const recoveryTaskSteps = recoveryPlan.recoverySteps.map((recoveryStep: any) => ({
+          description: recoveryStep.description,
+          action: this.createActionFromStep(recoveryStep),
+          completed: false,
+          retryCount: 0
+        }));
+        
+        // Insert recovery steps
+        this.taskSteps.splice(stepIndex, 0, ...recoveryTaskSteps);
+        
+        // Update the original step with alternative selectors if provided
+        if (recoveryPlan.alternativeSelectors && recoveryPlan.alternativeSelectors.length > 0) {
+          if (step.action && 'selector' in step.action) {
+            step.action.selector = recoveryPlan.alternativeSelectors;
+          }
+        }
+        
+        // Continue execution from the first recovery step
+        await this.executeStepsRecursively(stepIndex);
+        return;
+      }
 
       // Parse suggestion and update step
       try {
@@ -1000,6 +1286,146 @@ Return as JSON:
   }
 
   /**
+   * Send failure context back to OpenAI for better recovery suggestions
+   */
+  private async sendFailureToOpenAI(
+    step: TaskStep, 
+    stepIndex: number, 
+    failureContext: any,
+    screenshotPath: string
+  ): Promise<any> {
+    try {
+      log.info('[OPENAI_FEEDBACK] Sending failure context to OpenAI for recovery suggestions');
+      
+      // Get the action result from the browser
+      const lastActionResult = failureContext.lastActionResult || {};
+      
+      // Prepare the failure report
+      const failureReport = {
+        task: this.taskPrompt,
+        currentStep: step.description,
+        failedAction: step.action,
+        attemptNumber: step.retryCount,
+        pageUrl: await this.browser.getCurrentUrl(),
+        errorMessage: failureContext.error || 'Action failed',
+        duration: lastActionResult.duration || 0,
+        elementFound: lastActionResult.elementFound || false,
+        htmlContext: failureContext.html?.slice(0, 5000), // First 5000 chars of HTML
+        visibleElements: failureContext.visibleElements || [],
+        previousSteps: this.taskSteps.slice(0, stepIndex).map(s => ({
+          description: s.description,
+          action: s.action,
+          completed: s.completed
+        }))
+      };
+
+      // Create a message with screenshot for OpenAI
+      const messages = [
+        {
+          role: 'system' as const,
+          content: `You are an AI automation recovery assistant. A browser automation task has failed and you need to analyze the failure and provide recovery suggestions.
+          
+          The automation is using Playwright and can perform these actions:
+          - navigate: Go to a URL
+          - click: Click an element
+          - type: Type text into an element
+          - wait: Wait for time or element
+          - scroll: Scroll the page
+          - screenshot: Take a screenshot
+          - press: Press keyboard keys
+          
+          Analyze the failure context and suggest:
+          1. Why the action failed
+          2. Alternative selectors to try
+          3. Whether to wait for elements to load
+          4. If there are popups/modals blocking the action
+          5. Complete recovery steps to continue the automation`
+        },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: `The automation failed while trying to: "${step.description}"
+              
+              Failure Context:
+              ${JSON.stringify(failureReport, null, 2)}
+              
+              Please analyze the screenshot and provide specific recovery steps.
+              
+              IMPORTANT: 
+              - Provide multiple alternative selectors for each action
+              - Consider if elements might be hidden or covered by other elements
+              - Check if the page needs more time to load
+              - Look for any error messages or popups on the page
+              
+              Return a JSON response with:
+              {
+                "failureReason": "Clear explanation of why it failed",
+                "pageState": "Description of current page state",
+                "blockers": ["List of any popups, modals, or overlays blocking the action"],
+                "recoverySteps": [
+                  {
+                    "description": "What to do",
+                    "actionType": "click|type|wait|scroll|etc",
+                    "selectors": ["array", "of", "selector", "alternatives"],
+                    "value": "value if needed",
+                    "waitTime": 1000
+                  }
+                ],
+                "alternativeSelectors": ["Better selectors for the original failed action"],
+                "shouldRetry": true/false,
+                "confidence": 0-100
+              }`
+            },
+            {
+              type: 'image_url' as const,
+              image_url: {
+                url: `data:image/png;base64,${await this.getBase64FromPath(screenshotPath)}`
+              }
+            }
+          ]
+        }
+      ];
+
+      const response = await this.openai.chat.completions.create({
+        model: 'gpt-4o',
+        messages,
+        max_tokens: 4000,
+        temperature: 0.3,
+        response_format: { type: 'json_object' }
+      });
+
+      const recoveryPlan = JSON.parse(response.choices[0].message.content || '{}');
+      
+      log.info('[OPENAI_FEEDBACK] Recovery suggestions received:');
+      log.info(`[OPENAI_FEEDBACK] Failure reason: ${recoveryPlan.failureReason}`);
+      log.info(`[OPENAI_FEEDBACK] Page state: ${recoveryPlan.pageState}`);
+      log.info(`[OPENAI_FEEDBACK] Confidence: ${recoveryPlan.confidence}%`);
+      
+      return recoveryPlan;
+      
+    } catch (error) {
+      log.error('[OPENAI_FEEDBACK] Failed to get recovery suggestions from OpenAI', error as Error);
+      return null;
+    }
+  }
+
+  /**
+   * Get base64 encoded image from file path
+   */
+  private async getBase64FromPath(imagePath: string): Promise<string> {
+    try {
+      const fs = await import('fs/promises');
+      const imageBuffer = await fs.readFile(imagePath);
+      return imageBuffer.toString('base64');
+    } catch (error) {
+      log.error('Failed to read image file', error as Error);
+      return '';
+    }
+  }
+
+  /**
    * Temporary implementation - caching is disabled
    */
   private async cacheScript(): Promise<void> {
@@ -1117,7 +1543,7 @@ Return as JSON:
   /**
    * Generate Playwright test from successful script
    */
-  private async generateTest(): Promise<void> {
+  private async generateTest(): Promise<string | undefined> {
     try {
       const generator = new TestGenerator(this.currentScript);
       const testsDir = './tests/generated';
@@ -1127,8 +1553,10 @@ Return as JSON:
 
       await generator.generateTest(testPath);
       log.info(`Playwright test generated: ${testPath}`);
+      return testPath;
     } catch (error) {
       log.error('Failed to generate test', error as Error);
+      return undefined;
     }
   }
 } 

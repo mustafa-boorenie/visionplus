@@ -244,6 +244,7 @@ export interface AutomationExecutionResult {
   executionTime: number;
   screenshots: string[];
   errors?: string[];
+  testFile?: string;  // Path to generated test file
   stepResults?: Array<{
     step: string;
     success: boolean;
@@ -289,4 +290,18 @@ export interface SequenceSearchCriteria {
   createdAfter?: Date;
   createdBefore?: Date;
   minSuccessRate?: number;
+}
+
+export interface IBrowserAutomation {
+  initialize(): Promise<void>;
+  close(): Promise<void>;
+  executeAction(action: BrowserAction): Promise<void>;
+  executeActions(actions: BrowserAction[]): Promise<void>;
+  getPageHTML(): Promise<string>;
+  takeScreenshot(name: string, options?: ScreenshotOptions): Promise<string>;
+  getCurrentUrl(): Promise<string>;
+  takeHighQualityScreenshot(name: string, includeFullPage?: boolean): Promise<string>;
+  captureFailureContext(stepDescription: string): Promise<{ html: string; screenshotPath: string }>;
+  evaluate<T>(fn: () => T): Promise<T>;
+  get currentPage(): any; // Using 'any' to avoid circular dependencies with Playwright's Page type
 } 
