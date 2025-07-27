@@ -1,0 +1,15 @@
+{
+  "id": "4406a17b-cb26-4d65-a701-9abdf83b0704",
+  "timestamp": "2025-07-26T20:44:46.017Z",
+  "url": "https://www.aetna.com/search-results.html?query=",
+  "action": {
+    "type": "wait",
+    "duration": 3000
+  },
+  "success": true,
+  "pageContext": {
+    "html": "",
+    "screenshot": "/Users/mustafaboorenie/ai-playwright-scripter/screenshots/step_0_2025-07-26T20-44-45-955Z.png",
+    "selectors": []
+  }
+}

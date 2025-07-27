@@ -721,7 +721,7 @@ Return ONLY a javascript code block.`;
   /**
    * Run an automation command
    */
-  private async runAutomation(command: string, askForConfirmation: boolean = true): Promise<AutomationExecutionResult> {
+  private async runAutomation(command: string, askForConfirmation: boolean = true, isRunningSequence: boolean = false): Promise<AutomationExecutionResult> {
     console.log(chalk.blue(`\n🤖 Executing: ${command}`));
     
     const startTime = Date.now();
@@ -782,7 +782,9 @@ Return ONLY a javascript code block.`;
         currentBrowser, // browser automation instance
         enhancedPrompt,  // task prompt
         true,  // verbose
-        true   // persist browser
+        true,  // persist browser
+        isRunningSequence,  // whether we're running a saved sequence
+        this.rl  // pass the existing readline interface
       );
       
       // Execute automation and get result
@@ -799,8 +801,9 @@ Return ONLY a javascript code block.`;
         timestamp: new Date()
       });
       
-      // Only ask for confirmation if requested
-      if (askForConfirmation) {
+      // Only ask for confirmation if requested AND we're running a sequence
+      // (For non-sequence runs, IntelligentAutomation handles the confirmation)
+      if (askForConfirmation && isRunningSequence) {
         // Ask for confirmation
         const wasSuccessful = await this.askQuestion(chalk.cyan('\n🎯 Did the action complete successfully? (y/n): '));
         
@@ -1070,7 +1073,7 @@ Return ONLY a javascript code block.`;
         }
         
         // Execute the processed prompt with substituted arguments
-        await this.runAutomation(processedSequence.originalPrompt);
+        await this.runAutomation(processedSequence.originalPrompt, true, true);
         
         const executionTime = Date.now() - startTime;
         

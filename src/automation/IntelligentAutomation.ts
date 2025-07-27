@@ -14,6 +14,9 @@ import chalk from 'chalk';
 import { SelectorSuggester } from './SelectorSuggester';
 import { RecoveryPromptSystem } from './RecoveryPromptSystem';
 import { IBrowserAutomation } from '../types';
+import { FeedbackManager } from '../feedback/FeedbackManager';
+import { RulesEngine } from '../feedback/RulesEngine';
+import readline from 'readline';
 
 /**
  * Task step representing a single automation action
@@ -43,12 +46,19 @@ export class IntelligentAutomation {
   private executionErrors: string[] = [];
   private verbose: boolean;
   private persistBrowser: boolean;
+  private feedbackManager: FeedbackManager;
+  private rulesEngine: RulesEngine;
+  private expectScripts: Map<number, string> = new Map();
+  private isRunningSequence: boolean = false;
+  private externalReadline?: readline.Interface;
   
   constructor(
     browserAutomation: IBrowserAutomation,
     private taskPrompt: string,
     verbose: boolean = false,
     persistBrowser: boolean = false,
+    isRunningSequence: boolean = false,
+    externalReadline?: readline.Interface
     ) {
     const apiKey = Config.OPENAI_API_KEY;
     if (!apiKey) {
@@ -61,6 +71,10 @@ export class IntelligentAutomation {
     this.persistBrowser = persistBrowser;
     this.vectorStore = new VectorStore();
     this.progress = new ProgressTracker(this.verbose);
+    this.feedbackManager = new FeedbackManager();
+    this.rulesEngine = new RulesEngine();
+    this.isRunningSequence = isRunningSequence;
+    this.externalReadline = externalReadline;
     
     this.currentScript = {
       name: 'intelligent-automation',
@@ -96,6 +110,8 @@ export class IntelligentAutomation {
       }
       
       await this.vectorStore.initialize();
+      await this.feedbackManager.initialize();
+      await this.rulesEngine.initialize();
       
       // Set the URL and description in the current script
       this.currentScript.url = startUrl;
@@ -192,7 +208,7 @@ export class IntelligentAutomation {
       );
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'o4-mini',
         messages: [
           {
             role: 'system',
@@ -463,44 +479,179 @@ export class IntelligentAutomation {
     try {
       // Capture initial page state
       const pageUrl = await this.browser.getCurrentUrl();
+      const pageStateBefore = await this.capturePageState();
       const startTime = Date.now();
       
-      // Add action to script BEFORE execution so it's captured even if it fails
+      // Apply rules engine enhancements to action
       if (step.action) {
+        step.action = await this.rulesEngine.enhanceAction(step.action, pageUrl);
         this.currentScript.actions.push(step.action);
         await this.browser.executeAction(step.action);
       }
 
-      // Mark as completed
-      step.completed = true;
-      
       const duration = Date.now() - startTime;
       
-      // Enhanced step logging
-      log.step({
-        stepIndex: stepIndex + 1,
-        totalSteps: this.taskSteps.length,
-        stepDescription: step.description,
-        action: step.action,
-        pageUrl,
-        duration,
-        elementFound: true
-      });
+      // Take screenshot immediately after action
+      const screenshot = await this.browser.takeScreenshot(`step_${stepIndex}`);
       
-      this.progress.track({
-        type: 'step_complete',
-        stepIndex: stepIndex + 1,
-        totalSteps: this.taskSteps.length,
-        description: step.description
-      });
-
-      // Continue to next step
-      await this.checkAndDisplayIntent(stepIndex);
-      await this.executeStepsRecursively(stepIndex + 1);
+      // Capture page state after action
+      const pageStateAfter = await this.capturePageState();
+      
+      // For interactive mode (not sequences), ask user to confirm success first
+      if (this.persistBrowser && !this.isRunningSequence && step.action && step.action.type !== 'wait' && step.action.type !== 'screenshot') {
+        // First, log the step completion
+        log.step({
+          stepIndex: stepIndex + 1,
+          totalSteps: this.taskSteps.length,
+          stepDescription: step.description,
+          action: step.action,
+          pageUrl,
+          duration,
+          elementFound: true
+        });
+        
+        this.progress.track({
+          type: 'step_complete',
+          stepIndex: stepIndex + 1,
+          totalSteps: this.taskSteps.length,
+          description: step.description
+        });
+        
+        // Ask user if the action was successful
+        const wasSuccessful = await this.askUserForActionSuccess(step, stepIndex);
+        
+        if (wasSuccessful) {
+          // Mark as completed
+          step.completed = true;
+          
+          // Record successful feedback
+          await this.feedbackManager.recordFeedback({
+            url: pageUrl,
+            action: step.action,
+            success: true,
+            pageContext: {
+              html: pageStateAfter.html || '',
+              screenshot,
+              selectors: pageStateAfter.visibleElements?.map((el: any) => el.selector) || []
+            }
+          });
+          
+          // Now ask about expect script
+          const expectScript = await this.generateExpectScriptWithUserConfirmation(
+            step.action,
+            pageStateBefore,
+            pageStateAfter,
+            stepIndex
+          );
+          if (expectScript) {
+            this.expectScripts.set(stepIndex, expectScript);
+          }
+        } else {
+          // Action failed - ask user what to do
+          const recoveryChoice = await this.askUserForRecoveryChoice();
+          
+          if (recoveryChoice === 'recovery') {
+            // Record failure feedback
+            await this.feedbackManager.recordFeedback({
+              url: pageUrl,
+              action: step.action,
+              success: false,
+              error: 'User indicated action was not successful',
+              pageContext: {
+                html: pageStateAfter.html || '',
+                screenshot,
+                selectors: pageStateAfter.visibleElements?.map((el: any) => el.selector) || []
+              }
+            });
+            
+            // Trigger recovery mode
+            throw new Error('User indicated action was not successful - entering recovery mode');
+          } else {
+            // Retry the step
+            await this.executeStepsRecursively(stepIndex);
+            return;
+          }
+        }
+      } else {
+        // For sequences or non-interactive mode, assume success
+        step.completed = true;
+        
+        // Log the step completion
+        log.step({
+          stepIndex: stepIndex + 1,
+          totalSteps: this.taskSteps.length,
+          stepDescription: step.description,
+          action: step.action,
+          pageUrl,
+          duration,
+          elementFound: true
+        });
+        
+        this.progress.track({
+          type: 'step_complete',
+          stepIndex: stepIndex + 1,
+          totalSteps: this.taskSteps.length,
+          description: step.description
+        });
+        
+        if (step.action) {
+          await this.feedbackManager.recordFeedback({
+            url: pageUrl,
+            action: step.action,
+            success: true,
+            pageContext: {
+              html: pageStateAfter.html || '',
+              screenshot,
+              selectors: pageStateAfter.visibleElements?.map((el: any) => el.selector) || []
+            }
+          });
+          
+          // For sequences, generate expect script automatically without prompting
+          if (this.isRunningSequence && step.action.type !== 'wait' && step.action.type !== 'screenshot') {
+            const expectScript = await this.feedbackManager.generateExpectScript(
+              step.action,
+              pageStateBefore,
+              pageStateAfter
+            );
+            if (expectScript) {
+              this.expectScripts.set(stepIndex, expectScript);
+            }
+          }
+        }
+      }
+      
+      // Only continue if the step is marked as completed
+      if (step.completed) {
+        // Continue to next step
+        await this.checkAndDisplayIntent(stepIndex);
+        await this.executeStepsRecursively(stepIndex + 1);
+      }
 
     } catch (error) {
       const errorDetails = error instanceof Error ? error.message : String(error);
       const pageUrl = await this.browser.getCurrentUrl();
+      
+      // Record failure feedback
+      if (step.action) {
+        const screenshot = await this.browser.takeScreenshot(`failure_${stepIndex}_${step.retryCount}`);
+        const pageHTML = await this.browser.getPageHTML();
+        
+        await this.feedbackManager.recordFeedback({
+          url: pageUrl,
+          action: step.action,
+          success: false,
+          error: errorDetails,
+          pageContext: {
+            html: pageHTML,
+            screenshot,
+            selectors: []
+          }
+        });
+        
+        // Update rules engine patterns
+        const patterns = await this.feedbackManager.getLearningPatterns();
+        await this.rulesEngine.updateFromPatterns(patterns);
+      }
       
       // Enhanced error logging
       log.step({
@@ -628,7 +779,7 @@ try {
         
         // Get code-specific response
         const codeResponse = await this.openai.chat.completions.create({
-          model: 'gpt-4o',
+          model: 'o4-mini',
           messages: [
             {
               role: 'system',
@@ -1174,7 +1325,7 @@ Return as JSON:
 
       // Analyze HTML with AI
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'o4-mini',
         messages: [
           {
             role: 'system',
@@ -1389,7 +1540,7 @@ Return as JSON:
       ];
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'o4-mini',
         messages,
         max_tokens: 4000,
         temperature: 0.3,
@@ -1454,7 +1605,7 @@ Return as JSON:
         .join(', ');
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1',
         messages: [
           {
             role: 'system',
@@ -1558,5 +1709,276 @@ Return as JSON:
       log.error('Failed to generate test', error as Error);
       return undefined;
     }
+  }
+
+  /**
+   * Capture current page state for comparison
+   */
+  private async capturePageState(): Promise<any> {
+    try {
+      const html = await this.browser.getPageHTML();
+      const url = await this.browser.getCurrentUrl();
+      const visibleElements: any[] = [];
+      
+      return {
+        html,
+        url,
+        visibleElements,
+        timestamp: Date.now()
+      };
+    } catch (error) {
+      log.error('Failed to capture page state', error as Error);
+      return {};
+    }
+  }
+
+  /**
+   * Generate expect script with user confirmation [[memory:4393012]]
+   */
+  private async generateExpectScriptWithUserConfirmation(
+    action: BrowserAction,
+    pageStateBefore: any,
+    pageStateAfter: any,
+    stepIndex: number
+  ): Promise<string | null> {
+    try {
+      // Generate initial expect script
+      const expectScript = await this.feedbackManager.generateExpectScript(
+        action,
+        pageStateBefore,
+        pageStateAfter
+      );
+      
+      if (!expectScript) return null;
+      
+      // In interactive mode, show the expect script and ask for confirmation
+      if (this.persistBrowser) {
+        // Clear separation from previous output
+        console.log('\n');
+        console.log(chalk.blue('════════════════════════════════════════════════════════════'));
+        console.log(chalk.cyan('📝 Generated expect script for this step:'));
+        console.log(chalk.gray('──────────────────────────────────────────────────'));
+        console.log(chalk.yellow(expectScript));
+        console.log(chalk.gray('──────────────────────────────────────────────────'));
+        
+        const rl = this.externalReadline || readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        
+        const getResponse = async (): Promise<string | null> => {
+          // Clear any pending input before asking
+          if (process.stdin.readable && !this.externalReadline) {
+            process.stdin.read();
+          }
+          
+          const response = await new Promise<string>((resolve) => {
+            let answered = false;
+            rl.question(chalk.green('✓ Approve this expect script? (y/n/edit): '), (answer) => {
+              // Prevent duplicate processing
+              if (!answered) {
+                answered = true;
+                resolve(answer.trim());
+              }
+            });
+          });
+          
+          // Only check the first character for y/n, but allow full "edit"
+          const firstChar = response.charAt(0).toLowerCase();
+          const fullAnswer = response.toLowerCase();
+          
+          if (firstChar === 'y') {
+            log.info(`Expect script approved for step ${stepIndex}`);
+            console.log(chalk.blue('════════════════════════════════════════════════════════════\n'));
+            return expectScript;
+          } else if (firstChar === 'n') {
+            console.log(chalk.blue('════════════════════════════════════════════════════════════\n'));
+            return null;
+          } else if (fullAnswer === 'edit' || fullAnswer === 'e') {
+            // Allow user to edit the script
+            console.log(chalk.yellow('\nPlease enter your modified expect script (end with "---" on a new line):'));
+            
+            let editedScript = '';
+            for await (const line of rl) {
+              if (line === '---') {
+                break;
+              }
+              editedScript += line + '\n';
+            }
+            
+            console.log(chalk.blue('════════════════════════════════════════════════════════════\n'));
+            return editedScript.trim();
+          } else {
+            console.log(chalk.red('Invalid response. Please enter y, n, or edit.'));
+            return getResponse();
+          }
+        };
+        
+        const result = await getResponse();
+        // Only close if we created a new readline interface
+        if (!this.externalReadline) {
+          rl.close();
+        }
+        return result;
+      }
+      
+      return expectScript;
+    } catch (error) {
+      log.error('Failed to generate expect script', error as Error);
+      return null;
+    }
+  }
+
+  /**
+   * Run expect scripts for regression testing
+   */
+  async runExpectScripts(): Promise<boolean> {
+    if (this.expectScripts.size === 0) return true;
+    
+    log.info(`Running ${this.expectScripts.size} expect scripts for regression testing`);
+    
+    let allPassed = true;
+    
+    for (const [stepIndex, expectScript] of this.expectScripts) {
+      try {
+        // Evaluate the expect script in the browser context
+        const expectFunction = new Function(`
+          return (async () => {
+            const page = window;
+            ${expectScript}
+          })()
+        `);
+        await this.browser.evaluate(expectFunction as () => any);
+        
+        log.info(`✓ Expect script for step ${stepIndex} passed`);
+      } catch (error) {
+        log.error(`✗ Expect script for step ${stepIndex} failed`, error as Error);
+        allPassed = false;
+        
+        // Trigger recovery mode if expect fails
+        if (!this.isInRecoveryMode) {
+          await this.handleExpectFailure(stepIndex, error as Error);
+        }
+      }
+    }
+    
+    return allPassed;
+  }
+
+  /**
+   * Handle expect script failure
+   */
+  private async handleExpectFailure(stepIndex: number, error: Error): Promise<void> {
+    log.error(`Expect script failed for step ${stepIndex}`, error);
+    
+    // Record the failure in feedback
+    const pageUrl = await this.browser.getCurrentUrl();
+    const screenshot = await this.browser.takeScreenshot(`expect_failure_${stepIndex}`);
+    const pageHTML = await this.browser.getPageHTML();
+    
+    await this.feedbackManager.recordFeedback({
+      url: pageUrl,
+      action: { type: 'expect', expectScript: this.expectScripts.get(stepIndex) } as any,
+      success: false,
+      error: error.message,
+      pageContext: {
+        html: pageHTML,
+        screenshot,
+        selectors: []
+      }
+    });
+    
+    // Trigger recovery prompt
+    log.info('Triggering recovery mode due to expect script failure');
+    // Recovery logic would go here
+  }
+
+  private isInRecoveryMode: boolean = false;
+
+  /**
+   * Ask user if the action was successful
+   */
+  private async askUserForActionSuccess(step: TaskStep, stepIndex: number): Promise<boolean> {
+    console.log('\n');
+    console.log(chalk.blue('════════════════════════════════════════════════════════════'));
+    console.log(chalk.cyan('🎯 Action Confirmation'));
+    console.log(chalk.gray(`Step ${stepIndex + 1}: ${step.description}`));
+    console.log(chalk.gray('──────────────────────────────────────────────────'));
+    
+    // Clear any pending input in stdin
+    if (process.stdin.readable) {
+      process.stdin.read();
+    }
+    
+    const rl = this.externalReadline || readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      terminal: true
+    });
+    
+    // Small delay to ensure buffer is clear
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const response = await new Promise<string>((resolve) => {
+      let answered = false;
+      rl.question(chalk.green('Did the action complete successfully? (y/n): '), (answer) => {
+        if (!answered) {
+          answered = true;
+          // Only take the first character to avoid duplicate input issues
+          resolve(answer.trim().charAt(0));
+        }
+      });
+    });
+    
+    // Only close if we created a new readline interface
+    if (!this.externalReadline) {
+      rl.close();
+    }
+    
+    // Clear any remaining input that might have been typed
+    if (process.stdin.readable) {
+      process.stdin.read();
+    }
+    
+    console.log(chalk.blue('════════════════════════════════════════════════════════════\n'));
+    
+    return response.toLowerCase() === 'y';
+  }
+
+  /**
+   * Ask user what to do when action fails
+   */
+  private async askUserForRecoveryChoice(): Promise<'recovery' | 'retry'> {
+    console.log(chalk.yellow('\n⚠️  The action did not complete successfully.'));
+    
+    // Clear any pending input
+    if (process.stdin.readable) {
+      process.stdin.read();
+    }
+    
+    const rl = this.externalReadline || readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+    
+    // Small delay to ensure buffer is clear
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    const response = await new Promise<string>((resolve) => {
+      let answered = false;
+      rl.question(chalk.yellow('Would you like to enter recovery mode (r) or retry the action (t)? (r/t): '), (answer) => {
+        if (!answered) {
+          answered = true;
+          resolve(answer.trim().charAt(0));
+        }
+      });
+    });
+    
+    // Only close if we created a new readline interface
+    if (!this.externalReadline) {
+      rl.close();
+    }
+    
+    return response.toLowerCase() === 'r' ? 'recovery' : 'retry';
   }
 } 

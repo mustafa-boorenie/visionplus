@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Playwright Automation Dashboard</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    
+    header {
+      background: #2c3e50;
+      color: white;
+      padding: 20px 0;
+      margin-bottom: 30px;
+    }
+    
+    h1 {
+      text-align: center;
+    }
+    
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }
+    
+    input, textarea, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    
+    button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    
+    button:hover {
+      background: #2980b9;
+    }
+    
+    button:disabled {
+      background: #bdc3c7;
+      cursor: not-allowed;
+    }
+    
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+    
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    
+    .status.running {
+      background: #cce5ff;
+      color: #004085;
+      border: 1px solid #b8daff;
+    }
+    
+    .workflow-list {
+      list-style: none;
+    }
+    
+    .workflow-item {
+      padding: 10px;
+      border-bottom: 1px solid #eee;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .workflow-status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+    
+    .workflow-status.completed {
+      background: #28a745;
+      color: white;
+    }
+    
+    .workflow-status.failed {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .workflow-status.running {
+      background: #ffc107;
+      color: #212529;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #e9ecef;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: #28a745;
+      transition: width 0.3s ease;
+    }
+    
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #e9ecef;
+    }
+    
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: none;
+      background: none;
+      font-size: 16px;
+      color: #6c757d;
+      border-bottom: 2px solid transparent;
+      transition: all 0.3s;
+    }
+    
+    .tab.active {
+      color: #3498db;
+      border-bottom-color: #3498db;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    .file-upload {
+      border: 2px dashed #ddd;
+      border-radius: 4px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .file-upload:hover {
+      border-color: #3498db;
+      background: #f8f9fa;
+    }
+    
+    .file-upload.dragover {
+      border-color: #3498db;
+      background: #e3f2fd;
+    }
+    
+    #fileInput {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>AI Playwright Automation Dashboard</h1>
+  </header>
+  
+  <div class="container">
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('run')">Run Workflow</button>
+      <button class="tab" onclick="switchTab('sequences')">Sequences</button>
+      <button class="tab" onclick="switchTab('status')">Status</button>
+      <button class="tab" onclick="switchTab('learning')">Learning</button>
+    </div>
+    
+    <!-- Run Workflow Tab -->
+    <div id="run-tab" class="tab-content active">
+      <div class="card">
+        <h2>Run Automation Workflow</h2>
+        <form id="workflowForm">
+          <div class="form-group">
+            <label for="workflowType">Workflow Type</label>
+            <select id="workflowType" onchange="toggleWorkflowInputs()">
+              <option value="prompt">Custom Prompt</option>
+              <option value="sequence">Saved Sequence</option>
+            </select>
+          </div>
+          
+          <div id="promptInput" class="form-group">
+            <label for="prompt">Automation Prompt</label>
+            <textarea id="prompt" placeholder="e.g., Go to Google and search for AI news"></textarea>
+          </div>
+          
+          <div id="sequenceInput" class="form-group" style="display: none;">
+            <label for="sequence">Select Sequence</label>
+            <select id="sequence">
+              <option value="">Loading sequences...</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label for="startUrl">Start URL (optional)</label>
+            <input type="url" id="startUrl" placeholder="https://example.com">
+          </div>
+          
+          <div class="form-group">
+            <label for="csvUpload">Upload CSV (optional)</label>
+            <div class="file-upload" onclick="document.getElementById('fileInput').click()" 
+                 ondrop="handleDrop(event)" ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)">
+              <p id="fileLabel">Click to upload or drag and drop CSV file</p>
+              <input type="file" id="fileInput" accept=".csv" onchange="handleFileSelect(event)">
+            </div>
+          </div>
+          
+          <div id="argumentInputs" class="form-group"></div>
+          
+          <button type="submit">Run Workflow</button>
+        </form>
+        
+        <div id="runStatus"></div>
+      </div>
+    </div>
+    
+    <!-- Sequences Tab -->
+    <div id="sequences-tab" class="tab-content">
+      <div class="card">
+        <h2>Saved Sequences</h2>
+        <ul id="sequenceList" class="workflow-list">
+          <li>Loading sequences...</li>
+        </ul>
+      </div>
+    </div>
+    
+    <!-- Status Tab -->
+    <div id="status-tab" class="tab-content">
+      <div class="card">
+        <h2>Workflow Status</h2>
+        <ul id="workflowList" class="workflow-list">
+          <li>No workflows running</li>
+        </ul>
+      </div>
+    </div>
+    
+    <!-- Learning Tab -->
+    <div id="learning-tab" class="tab-content">
+      <div class="card">
+        <h2>Learning Patterns</h2>
+        <div id="patterns">Loading patterns...</div>
+        <button onclick="generateTrainingData()">Generate Training Data</button>
+        <div id="trainingStatus"></div>
+      </div>
+      
+      <div class="card">
+        <h2>Automation Rules</h2>
+        <div id="rules">Loading rules...</div>
+      </div>
+    </div>
+  </div>
+  
+  <script>
+    const API_URL = 'http://localhost:3000';
+    let csvData = null;
+    let currentWorkflowId = null;
+    
+    // Initialize
+    document.addEventListener('DOMContentLoaded', () => {
+      loadSequences();
+      loadWorkflows();
+      loadPatterns();
+      loadRules();
+      
+      // Poll for updates
+      setInterval(() => {
+        if (currentWorkflowId) {
+          checkWorkflowStatus(currentWorkflowId);
+        }
+        loadWorkflows();
+      }, 2000);
+    });
+    
+    // Tab switching
+    function switchTab(tab) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      
+      event.target.classList.add('active');
+      document.getElementById(`${tab}-tab`).classList.add('active');
+    }
+    
+    // Toggle workflow inputs
+    function toggleWorkflowInputs() {
+      const type = document.getElementById('workflowType').value;
+      document.getElementById('promptInput').style.display = type === 'prompt' ? 'block' : 'none';
+      document.getElementById('sequenceInput').style.display = type === 'sequence' ? 'block' : 'none';
+      
+      if (type === 'sequence') {
+        loadSequenceArguments();
+      }
+    }
+    
+    // File handling
+    function handleFileSelect(event) {
+      const file = event.target.files[0];
+      if (file) {
+        uploadCSV(file);
+      }
+    }
+    
+    function handleDrop(event) {
+      event.preventDefault();
+      event.target.classList.remove('dragover');
+      
+      const file = event.dataTransfer.files[0];
+      if (file && file.name.endsWith('.csv')) {
+        uploadCSV(file);
+      }
+    }
+    
+    function handleDragOver(event) {
+      event.preventDefault();
+      event.target.classList.add('dragover');
+    }
+    
+    function handleDragLeave(event) {
+      event.target.classList.remove('dragover');
+    }
+    
+    // Upload CSV
+    async function uploadCSV(file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      try {
+        const response = await fetch(`${API_URL}/api/upload/csv`, {
+          method: 'POST',
+          body: formData
+        });
+        
+        const result = await response.json();
+        if (response.ok) {
+          csvData = result.data;
+          document.getElementById('fileLabel').textContent = `${file.name} (${result.rows} rows)`;
+          showStatus('runStatus', `CSV uploaded: ${result.rows} rows, columns: ${result.columns.join(', ')}`, 'success');
+        } else {
+          showStatus('runStatus', 'Failed to upload CSV', 'error');
+        }
+      } catch (error) {
+        showStatus('runStatus', 'Error uploading CSV', 'error');
+      }
+    }
+    
+    // Form submission
+    document.getElementById('workflowForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const type = document.getElementById('workflowType').value;
+      const body = {
+        startUrl: document.getElementById('startUrl').value,
+        csvData: csvData
+      };
+      
+      if (type === 'prompt') {
+        body.prompt = document.getElementById('prompt').value;
+      } else {
+        body.sequenceName = document.getElementById('sequence').value;
+        
+        // Collect arguments
+        const argInputs = document.querySelectorAll('.arg-input');
+        if (argInputs.length > 0) {
+          body.arguments = {};
+          argInputs.forEach(input => {
+            body.arguments[input.dataset.arg] = input.value;
+          });
+        }
+      }
+      
+      try {
+        const response = await fetch(`${API_URL}/api/workflows/run`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        
+        const result = await response.json();
+        if (response.ok) {
+          currentWorkflowId = result.workflowId;
+          showStatus('runStatus', `Workflow started: ${result.workflowId}`, 'running');
+          checkWorkflowStatus(result.workflowId);
+        } else {
+          showStatus('runStatus', result.error || 'Failed to start workflow', 'error');
+        }
+      } catch (error) {
+        showStatus('runStatus', 'Error starting workflow', 'error');
+      }
+    });
+    
+    // Load sequences
+    async function loadSequences() {
+      try {
+        const response = await fetch(`${API_URL}/api/sequences`);
+        const data = await response.json();
+        
+        const select = document.getElementById('sequence');
+        select.innerHTML = data.sequences.map(seq => 
+          `<option value="${seq.metadata.name}">${seq.metadata.name} - ${seq.metadata.description}</option>`
+        ).join('');
+        
+        const list = document.getElementById('sequenceList');
+        list.innerHTML = data.sequences.map(seq => `
+          <li class="workflow-item">
+            <div>
+              <strong>${seq.metadata.name}</strong>
+              <br><small>${seq.metadata.description}</small>
+            </div>
+            <div>
+              <span class="workflow-status completed">${seq.metadata.successRate}% success</span>
+            </div>
+          </li>
+        `).join('');
+      } catch (error) {
+        console.error('Failed to load sequences:', error);
+      }
+    }
+    
+    // Load sequence arguments
+    async function loadSequenceArguments() {
+      const sequenceName = document.getElementById('sequence').value;
+      if (!sequenceName) return;
+      
+      try {
+        const response = await fetch(`${API_URL}/api/sequences/${sequenceName}/arguments`);
+        const data = await response.json();
+        
+        const container = document.getElementById('argumentInputs');
+        if (data.arguments && data.arguments.length > 0) {
+          container.innerHTML = '<h3>Arguments:</h3>' + data.arguments.map(arg => `
+            <div class="form-group">
+              <label for="arg-${arg}">${arg}</label>
+              <input type="text" class="arg-input" id="arg-${arg}" data-arg="${arg}" placeholder="Enter ${arg}">
+            </div>
+          `).join('');
+        } else {
+          container.innerHTML = '';
+        }
+      } catch (error) {
+        console.error('Failed to load arguments:', error);
+      }
+    }
+    
+    // Check workflow status
+    async function checkWorkflowStatus(workflowId) {
+      try {
+        const response = await fetch(`${API_URL}/api/workflows/${workflowId}/status`);
+        const status = await response.json();
+        
+        if (status.status === 'completed') {
+          showStatus('runStatus', 'Workflow completed successfully!', 'success');
+          currentWorkflowId = null;
+        } else if (status.status === 'failed') {
+          showStatus('runStatus', `Workflow failed: ${status.error}`, 'error');
+          currentWorkflowId = null;
+        } else if (status.status === 'running') {
+          const progress = status.progress || 0;
+          showStatus('runStatus', `
+            <div>Workflow running...</div>
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: ${progress}%"></div>
+            </div>
+          `, 'running');
+        }
+      } catch (error) {
+        console.error('Failed to check status:', error);
+      }
+    }
+    
+    // Load workflows
+    async function loadWorkflows() {
+      try {
+        const response = await fetch(`${API_URL}/api/workflows`);
+        const data = await response.json();
+        
+        const list = document.getElementById('workflowList');
+        if (data.workflows.length === 0) {
+          list.innerHTML = '<li>No workflows found</li>';
+        } else {
+          list.innerHTML = data.workflows.map(wf => `
+            <li class="workflow-item">
+              <div>
+                <strong>${wf.id}</strong>
+                <br><small>Started: ${new Date(wf.startedAt).toLocaleString()}</small>
+              </div>
+              <span class="workflow-status ${wf.status}">${wf.status}</span>
+            </li>
+          `).join('');
+        }
+      } catch (error) {
+        console.error('Failed to load workflows:', error);
+      }
+    }
+    
+    // Load patterns
+    async function loadPatterns() {
+      try {
+        const response = await fetch(`${API_URL}/api/feedback/patterns`);
+        const data = await response.json();
+        
+        const container = document.getElementById('patterns');
+        container.innerHTML = data.patterns.map(p => `
+          <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+            <strong>${p.pattern}</strong>
+            <br>Type: ${p.type}, Confidence: ${(p.confidence * 100).toFixed(0)}%
+            <br>Occurrences: ${p.occurrences}
+          </div>
+        `).join('') || 'No patterns detected yet';
+      } catch (error) {
+        console.error('Failed to load patterns:', error);
+      }
+    }
+    
+    // Load rules
+    async function loadRules() {
+      try {
+        const response = await fetch(`${API_URL}/api/rules`);
+        const data = await response.json();
+        
+        const container = document.getElementById('rules');
+        container.innerHTML = data.rules.map(r => `
+          <div style="margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+            <strong>Rule: ${r.id}</strong>
+            <br>Type: ${r.type}, Priority: ${r.priority}
+            <br>Success: ${r.successCount}, Failures: ${r.failureCount}
+          </div>
+        `).join('') || 'No rules configured';
+      } catch (error) {
+        console.error('Failed to load rules:', error);
+      }
+    }
+    
+    // Generate training data
+    async function generateTrainingData() {
+      try {
+        const response = await fetch(`${API_URL}/api/feedback/train`, {
+          method: 'POST'
+        });
+        
+        const result = await response.json();
+        showStatus('trainingStatus', `Generated ${result.conversations} training conversations`, 'success');
+      } catch (error) {
+        showStatus('trainingStatus', 'Failed to generate training data', 'error');
+      }
+    }
+    
+    // Show status message
+    function showStatus(elementId, message, type) {
+      const element = document.getElementById(elementId);
+      element.className = `status ${type}`;
+      element.innerHTML = message;
+    }
+  </script>
+</body>
+</html> 

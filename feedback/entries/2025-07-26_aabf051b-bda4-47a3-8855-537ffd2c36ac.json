@@ -1,0 +1,15 @@
+{
+  "id": "aabf051b-bda4-47a3-8855-537ffd2c36ac",
+  "timestamp": "2025-07-26T20:09:44.322Z",
+  "url": "https://www.bcbs.com/demo",
+  "action": {
+    "type": "wait",
+    "duration": 2000
+  },
+  "success": true,
+  "pageContext": {
+    "html": "<html><head></head><body></body></html>",
+    "screenshot": "/Users/mustafaboorenie/ai-playwright-scripter/screenshots/step_1_2025-07-26T20-09-44-243Z.png",
+    "selectors": []
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "25589270-3a89-42e2-9acf-e24b917b9bb7",
+  "timestamp": "2025-07-26T20:46:12.294Z",
+  "url": "https://www.google.com/search?q=y&sca_esv=c2df872898b90107&source=hp&ei=fz6FaJv4A6ezqtsPu63G2Qs&iflsig=AOw8s4IAAAAAaIVMj6Id7oSl8ENWfvD30rhr1II-7PW9&ved=0ahUKEwjbs_mmstuOAxWnmWoFHbuWMbsQ4dUDCBA&uact=5&oq=y&gs_lp=Egdnd3Mtd2l6IgF5MgsQLhiABBixAxiDATIREC4YgAQYsQMY0QMYgwEYxwEyERAuGIAEGLEDGNEDGIMBGMcBMgsQABiABBixAxiDATILEC4YgAQYsQMYgwEyCxAAGIAEGLEDGIMBMggQLhiABBixAzIIEAAYgAQYsQMyCxAAGIAEGLEDGIMBMgsQABiABBixAxiDAUj3cFAAWNARcAB4AJABAJgBbaABywGqAQMxLjG4AQPIAQD4AQGYAgKgAtIBwgIFEAAYgATCAgYQABgWGB7CAgsQABiABBiGAxiKBcICCBAAGKIEGIkFmAMAkgcDMS4xoAe3E7IHAzEuMbgH0gHCBwUwLjEuMcgHBQ&sclient=gws-wiz&sei=kj6FaNvqPOS6qtsPzriQ0QQ",
+  "action": {
+    "type": "press",
+    "selector": [
+      "textarea[name='q']",
+      "#APjFqb"
+    ],
+    "key": "Enter"
+  },
+  "success": true,
+  "pageContext": {
+    "html": "<!DOCTYPE html>",
+    "screenshot": "/Users/mustafaboorenie/ai-playwright-scripter/screenshots/step_2_2025-07-26T20-46-12-155Z.png",
+    "selectors": []
+  }
+}

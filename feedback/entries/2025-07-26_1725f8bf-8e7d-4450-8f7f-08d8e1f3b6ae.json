@@ -1,0 +1,19 @@
+{
+  "id": "1725f8bf-8e7d-4450-8f7f-08d8e1f3b6ae",
+  "timestamp": "2025-07-26T20:46:11.320Z",
+  "url": "https://www.google.com/?zx=1753562751800&no_sw_cr=1",
+  "action": {
+    "type": "press",
+    "selector": [
+      "textarea[name='q']",
+      "#APjFqb"
+    ],
+    "key": "Enter"
+  },
+  "success": true,
+  "pageContext": {
+    "html": "<!DOCTYPE html>",
+    "screenshot": "/Users/mustafaboorenie/ai-playwright-scripter/screenshots/step_1_2025-07-26T20-46-11-179Z.png",
+    "selectors": []
+  }
+}
