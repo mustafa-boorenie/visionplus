@@ -1,0 +1,15 @@
+{
+  "id": "3cee6e0b-47cc-4d9f-9d60-2de9de7626d3",
+  "timestamp": "2025-07-28T14:26:00.479Z",
+  "url": "",
+  "action": {
+    "type": "wait",
+    "duration": 3000
+  },
+  "success": true,
+  "pageContext": {
+    "html": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"### Page state\\n- Page URL: about:blank\\n- Page Title: \\n- Page Snapshot:\\n```yaml\\n\\n```\\n\"\n    }\n  ]\n}",
+    "screenshot": "step_1-1753712760321.png",
+    "selectors": []
+  }
+}

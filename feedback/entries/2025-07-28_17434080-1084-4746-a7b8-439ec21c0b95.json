@@ -1,0 +1,15 @@
+{
+  "id": "17434080-1084-4746-a7b8-439ec21c0b95",
+  "timestamp": "2025-07-28T14:25:53.142Z",
+  "url": "",
+  "action": {
+    "type": "navigate",
+    "url": ""
+  },
+  "success": true,
+  "pageContext": {
+    "html": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"### Page state\\n- Page URL: about:blank\\n- Page Title: \\n- Page Snapshot:\\n```yaml\\n\\n```\\n\"\n    }\n  ]\n}",
+    "screenshot": "step_0-1753712747781.png",
+    "selectors": []
+  }
+}

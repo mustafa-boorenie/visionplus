@@ -1,0 +1,25 @@
+{
+  "id": "778f1041-2e07-478b-8783-748929322d68",
+  "timestamp": "2025-07-28T08:00:06.701Z",
+  "url": "",
+  "action": {
+    "type": "click",
+    "selector": [
+      "#continue-shopping",
+      "[data-testid='continue-shopping']",
+      "[aria-label='Continue Shopping']",
+      "[role='button']:has-text('Continue Shopping')",
+      "button[name='continue-shopping']",
+      ".continue-shopping",
+      "button:has-text('Continue Shopping')",
+      "a:has-text('Continue Shopping')"
+    ]
+  },
+  "success": false,
+  "error": "User indicated action was not successful",
+  "pageContext": {
+    "html": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"### New console messages\\n- Uncaught TypeError: a.ue.log is not a function\\n    at <anonymous> (https://images-na.ssl-images-amaz...\\n\\n### Page state\\n- Page URL: https://www.amazon.com/\\n- Page Title: Amazon.com\\n- Page Snapshot:\\n```yaml\\n- generic [ref=e2]:\\n  - generic [ref=e3]:\\n    - heading \\\"Click the button below to continue shopping\\\" [level=4] [ref=e9]\\n    - button \\\"Continue shopping\\\" [ref=e18] [cursor=pointer]\\n  - generic [ref=e21]:\\n    - link \\\"Conditions of Use\\\" [ref=e22] [cursor=pointer]:\\n      - /url: https://www.amazon.com/gp/help/customer/display.html/ref=footer_cou?ie=UTF8&nodeId=508088\\n    - link \\\"Privacy Policy\\\" [ref=e27] [cursor=pointer]:\\n      - /url: https://www.amazon.com/gp/help/customer/display.html/ref=footer_privacy?ie=UTF8&nodeId=468496\\n  - generic [ref=e28]: © 1996-2025, Amazon.com, Inc. or its affiliates\\n```\\n\"\n    }\n  ]\n}",
+    "screenshot": "step_0-1753689601651.png",
+    "selectors": []
+  }
+}

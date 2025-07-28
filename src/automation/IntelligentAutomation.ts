@@ -51,6 +51,7 @@ export class IntelligentAutomation {
   private expectScripts: Map<number, string> = new Map();
   private isRunningSequence: boolean = false;
   private externalReadline?: readline.Interface;
+  private onScreenshotCapture?: (filepath: string) => void; // Add screenshot callback
   
   constructor(
     browserAutomation: IBrowserAutomation,
@@ -58,13 +59,15 @@ export class IntelligentAutomation {
     verbose: boolean = false,
     persistBrowser: boolean = false,
     isRunningSequence: boolean = false,
-    externalReadline?: readline.Interface
-    ) {
+    externalReadline?: readline.Interface,
+    onScreenshotCapture?: (filepath: string) => void
+  ) {
     const apiKey = Config.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is not set in the environment variables.");
     }
-    this.openai = new OpenAI({ apiKey });
+    // Enable detailed logging for OpenAI requests to aid debugging (`logLevel: 'debug'` requires openai@^5.10.0)
+    this.openai = new OpenAI({ apiKey, logLevel: 'debug' } as any);
     this.browser = browserAutomation;
     this.vision = new VisionAnalyzer();
     this.verbose = verbose;
@@ -75,6 +78,7 @@ export class IntelligentAutomation {
     this.rulesEngine = new RulesEngine();
     this.isRunningSequence = isRunningSequence;
     this.externalReadline = externalReadline;
+    this.onScreenshotCapture = onScreenshotCapture; // Store callback
     
     this.currentScript = {
       name: 'intelligent-automation',
@@ -186,6 +190,7 @@ export class IntelligentAutomation {
       duration: 0 // Individual step duration would need more tracking
     }));
 
+    log.info(`[DEBUG] Returning result with ${this.screenshots.length} screenshots`);
     return {
       success,
       script: this.currentScript,
@@ -207,124 +212,174 @@ export class IntelligentAutomation {
         this.currentScript.description || ''
       );
 
-      const response = await this.openai.chat.completions.create({
-        model: 'o4-mini',
-        messages: [
-          {
-            role: 'system',
-            content: `You are an expert at breaking down web automation tasks into specific, actionable steps.
-            Each step should be a single browser action like navigate, click, type, scroll, screenshot, goBack, goForward, reload, newTab, switchTab, or closeTab.
-            Be specific about what elements to interact with.
-            
-            ${relevantDocs}
-            
-            IMPORTANT: Use modern Playwright selectors as shown in the documentation above.
-            Prefer getByRole, getByText, getByLabel over CSS selectors when possible.
-            
-            For common websites, use these known selectors:
-      
-            Prefer ID selectors over class selectors when available.
-            Use data-testid attributes if present.
-            
-            Common navigation patterns:
-            - "go to google" → navigate to https://www.google.com
-            - "go to amazon" → navigate to https://www.amazon.com
-            - "navigate to [site]" → navigate to the appropriate URL
-            - "open [website]" → navigate to the website
-            
-            For Google search, use these specific selectors:
-            - Search box: textarea[name="q"] or #APjFqb
-            - Search button: input[name="btnK"] (for search button)
-            - I'm Feeling Lucky: input[name="btnI"]
-            Note: Google uses a textarea element, not an input, for the search box!
-            
-            For PubMed search, use these specific selectors:
-            - Search box: input[name="term"] or #id_term
-            - The search input has class "term-input" and role="combobox"
-            - Press Enter to search (no separate search button needed)
-            
-            Important tips:
-            - For Google search, prefer pressing Enter in the search box rather than clicking the search button
-            - After typing in a search box, you may need to wait briefly before pressing Enter
-            - Consider page load times and add appropriate wait steps
-            - Be aware that some sites (especially Amazon) may show CAPTCHAs during automation
-            - Add wait steps after navigation to allow pages to fully load
-            
-            Browser Navigation Actions:
-            - goBack: Use when the user wants to go back to the previous page (e.g., "go back", "navigate back", "return to previous page")
-            - goForward: Use when the user wants to go forward in browser history
-            - reload: Use when the user wants to refresh/reload the current page
-            - newTab: Use when the user wants to open a new browser tab (optionally with a URL)
-            - switchTab: Use when the user wants to switch between open tabs (by index, URL pattern, or title)
-            - closeTab: Use when the user wants to close a tab
-            
-            CRITICAL: For EACH action that requires a selector (click, type, press, wait, scroll, select):
-            Instead of providing a single 'selector' field, provide a 'selectors' array with multiple candidates.
-            Order them from most specific/reliable to most generic. Include various selector types:
-            1. ID selectors (#id)
-            2. Data attributes ([data-testid="..."])
-            3. Aria labels ([aria-label="..."])
-            4. Role-based (use as CSS: [role="..."])
-            5. Name attributes ([name="..."])
-            6. Class selectors (.class)
-            7. Text content (button:has-text("..."))
-            8. Placeholder ([placeholder="..."])
-            9. Type attributes ([type="..."])
-            
-            Example:
-            {
-              "description": "Click search button",
-              "actionType": "click",
-              "selectors": [
-                "button[data-testid='search-submit']",
-                "#search-button",
-                "button[aria-label='Search']",
-                "[role='button']:has-text('Search')",
-                "button[type='submit']",
-                ".search-button",
-                "button:has-text('Search')"
-              ]
-            }`
-          },
-          {
-            role: 'user',
-            content: `Break down this task into specific browser automation steps:
-            Task: ${this.currentScript.description}
-            Current URL: ${this.currentScript.url}
-            
-            Context: The browser is currently on this page. Include navigation steps when the user explicitly asks to go somewhere (e.g., "go to google", "navigate to website.com").
-            
-            IMPORTANT: Extract and use exact values from the task description:
-            - If the task mentions specific text to type (e.g., "type 'mustafa.boorenie'"), use "mustafa.boorenie" as the exact value
-            - If the task mentions specific values, IDs, or data, use those exact values
-            - Only use placeholders when the task itself uses generic terms
-            - DO NOT mask or hide sensitive values like passwords - use the exact values provided in the task
-            - If a password is provided in the task, use it as-is in the 'value' field, do not replace it with [hidden] or any other placeholder
-            - If the task explicitly asks to navigate somewhere (e.g., "go to google", "navigate to amazon"), then add a navigation step
-            - If the task is about interacting with the current page, don't add unnecessary navigation steps
-            
-            For example:
-            - Task: "type 'john.doe' in username field" → Use exact value "john.doe"
-            - Task: "go to the text field and type 'mustafa.boorenie'" → Type exact value "mustafa.boorenie"
-            - Task: "search for product ABC123" → Use "ABC123" in the action
-            - Task: "enter password MyPass123!" → Use exact value "MyPass123!"
-            
-            Return a JSON array of steps, each with:
-            - description: what to do
-            - actionType: navigate|click|type|scroll|wait|screenshot|press|goBack|goForward|reload|newTab|switchTab|closeTab
-            - selector: CSS selector if needed (be specific and use reliable selectors)
-            - value: text to type or URL to navigate to (use exact values, do not mask passwords)
-            - waitTime: milliseconds to wait if needed
-            - url: URL for newTab or switchTab actions
-            - title: title pattern for switchTab action
-            - index: tab index for switchTab or closeTab actions
-            - waitUntil: 'load'|'domcontentloaded'|'networkidle' for navigation actions`
-          }
-        ],
-        response_format: { type: 'json_object' }
-      });
+      log.info(`[OPENAI_DEBUG] Making API call to OpenAI...`);
+      log.info(`[OPENAI_DEBUG] Model: gpt-4.1-2025-04-14`);
+      log.info(`[OPENAI_DEBUG] Task: ${this.currentScript.description}`);
+      log.info(`[OPENAI_DEBUG] Current URL: ${this.currentScript.url}`);
+      log.info(`[OPENAI_DEBUG] API Key present: ${this.openai.apiKey ? 'YES' : 'NO'}`);
+      log.info(`[OPENAI_DEBUG] API Key length: ${this.openai.apiKey?.length || 0}`);
 
-      const stepsData = JSON.parse(response.choices[0].message.content || '{"steps": []}');
+      let response;
+      try {
+        response = await this.openai.chat.completions.create({
+          model: 'gpt-4.1-2025-04-14',
+          messages: [
+            {
+              role: 'system',
+              content: `You are an expert at breaking down web automation tasks into specific, actionable steps.
+              Each step should be a single browser action like navigate, click, type, press, or wait.
+              
+              Return your response as a JSON object with this exact structure:
+              {
+                "steps": [
+                  {
+                    "description": "Brief description of what this step does",
+                    "actionType": "navigate|click|type|press|wait|screenshot",
+                    "selector": "CSS selector (for click/type/press actions)",
+                    "selectors": ["array", "of", "selectors"] (alternative to selector),
+                    "value": "text to type or key to press",
+                    "url": "URL to navigate to (for navigate actions)",
+                    "waitTime": 2000 (for wait actions, in milliseconds)
+                  }
+                ]
+              }
+              
+              Guidelines:
+              - Break complex tasks into simple, atomic steps
+              - Use multiple selectors when possible for better reliability
+              - For search tasks: navigate, type in search field, press Enter
+              - For form filling: type in each field separately, then submit
+              - Always include specific CSS selectors for interactive elements
+              - Use descriptive action descriptions
+              
+              Important: Google uses a textarea for search, not input:
+              - Google search box: textarea[name="q"], #APjFqb, textarea[title="Search"]
+              - Always use textarea selectors for Google search, not input
+              
+              Current webpage context:
+              - URL: ${this.currentScript.url}
+              - Task: ${this.currentScript.description}
+              
+              Be precise and specific in your step breakdown.`
+            },
+            {
+              role: 'user', 
+              content: this.currentScript.description || 'Execute task'
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000
+        });
+        
+        log.info(`[OPENAI_DEBUG] API call completed successfully`);
+        log.info(`[OPENAI_DEBUG] Response status: ${response.choices?.length > 0 ? 'OK' : 'NO_CHOICES'}`);
+      } catch (error) {
+        log.error(`[OPENAI_DEBUG] API call failed: ${error}`);
+        log.error(`[OPENAI_DEBUG] Error details: ${JSON.stringify(error, null, 2)}`);
+        
+        // Return fallback error
+        throw new Error(`OpenAI API call failed: ${error}`);
+      }
+      
+      const responseContent = response.choices[0].message.content;
+      log.info(`[OPENAI_DEBUG] Response content length: ${responseContent?.length || 0}`);
+      log.info(`[TASK_BREAKDOWN] AI Response: ${responseContent}`);
+      
+
+      
+      let stepsData;
+      try {
+        stepsData = JSON.parse(responseContent || '{"steps": []}');
+        // Handle case where AI returns null object
+        if (!stepsData || typeof stepsData !== 'object') {
+          stepsData = { steps: [] };
+        }
+      } catch (error) {
+        log.warn(`[TASK_BREAKDOWN] Failed to parse AI response, using empty steps: ${error}`);
+        stepsData = { steps: [] };
+      }
+      
+      // Check if steps array is empty
+      if (!stepsData.steps || stepsData.steps.length === 0) {
+        log.warn(`[TASK_BREAKDOWN] WARNING: AI returned no steps for task: "${this.currentScript.description}"`);
+        log.warn(`[TASK_BREAKDOWN] Current URL: ${this.currentScript.url}`);
+        
+        // For search tasks on about:blank, provide a smart fallback
+        const taskLower = (this.currentScript.description || '').toLowerCase();
+        if (taskLower.includes('search') && this.currentScript.url === 'about:blank') {
+          log.info(`[TASK_BREAKDOWN] Using smart fallback for search task on blank page`);
+          const searchMatch = taskLower.match(/search\s+(?:for\s+)?(.+?)(?:\s+and\s+|$)/);
+          const searchTerm = searchMatch?.[1]?.trim() || 'baby toys';
+          
+          stepsData = {
+            steps: [
+              {
+                description: "Navigate to Google",
+                actionType: "navigate",
+                url: "https://www.google.com",
+                waitUntil: "domcontentloaded"
+              },
+              {
+                description: `Search for "${searchTerm}"`,
+                actionType: "type",
+                selector: "textarea[name='q']",
+                value: searchTerm
+              },
+              {
+                description: "Submit search",
+                actionType: "press",
+                key: "Enter"
+              }
+            ]
+          };
+          
+          log.info(`[TASK_BREAKDOWN] Generated fallback with ${stepsData.steps.length} steps`);
+          
+          this.taskSteps = stepsData.steps.map((step: any) => ({
+            description: step.description,
+            action: this.createActionFromStep(step),
+            completed: false,
+            retryCount: 0
+          }));
+          
+          return;
+        }
+        
+        // For "go to" tasks, provide navigation fallback
+        if (taskLower.includes('go to') || taskLower.includes('navigate')) {
+          const urlMatch = taskLower.match(/(?:go to|navigate to)\s+(.+?)(?:\s|$)/);
+          let url = urlMatch?.[1]?.trim() || 'google.com';
+          
+          // Add https:// if no protocol
+          if (!url.startsWith('http')) {
+            url = `https://www.${url.replace(/^www\./, '')}`;
+          }
+          
+          stepsData = {
+            steps: [
+              {
+                description: `Navigate to ${url}`,
+                actionType: "navigate",
+                url: url,
+                waitUntil: "domcontentloaded"
+              }
+            ]
+          };
+          
+          log.info(`[TASK_BREAKDOWN] Generated navigation fallback to ${url}`);
+          
+          this.taskSteps = stepsData.steps.map((step: any) => ({
+            description: step.description,
+            action: this.createActionFromStep(step),
+            completed: false,
+            retryCount: 0
+          }));
+          
+          return;
+        }
+        
+        throw new Error('No steps generated by AI and no suitable fallback available');
+      }
       
       // Validate and warn about masked values
       stepsData.steps.forEach((step: any) => {
@@ -335,7 +390,7 @@ export class IntelligentAutomation {
       });
       
       // Log the generated steps for debugging
-      log.info('[TASK_BREAKDOWN] Generated steps:');
+      log.info(`[TASK_BREAKDOWN] Generated ${stepsData.steps.length} steps:`);
       stepsData.steps.forEach((step: any, index: number) => {
         log.info(`[TASK_BREAKDOWN] Step ${index + 1}: ${step.description}`);
         log.info(`[TASK_BREAKDOWN]   Action: ${step.actionType}`);
@@ -362,27 +417,163 @@ export class IntelligentAutomation {
 
     } catch (error) {
       log.error('Failed to breakdown task', error as Error);
-      // Fallback to basic steps
-      this.taskSteps = [
-        {
-          description: 'Navigate to URL',
-          action: { type: 'navigate', url: this.currentScript.url },
-          completed: false,
-          retryCount: 0
-        },
-        {
-          description: 'Wait for page load',
-          action: { type: 'wait', duration: 3000 },
-          completed: false,
-          retryCount: 0
-        },
-        {
-          description: 'Take screenshot',
-          action: { type: 'screenshot', name: 'initial' },
-          completed: false,
-          retryCount: 0
+      
+      // Improved fallback based on common patterns
+      const taskLower = (this.currentScript.description || '').toLowerCase();
+      
+      if (taskLower.includes('search')) {
+        // Extract search term
+        const searchMatch = taskLower.match(/search\s+(?:for\s+)?(.+?)(?:\s+and\s+|$)/);
+        const searchTerm = searchMatch?.[1]?.trim() || '';
+        
+        const fallbackSteps = [];
+        
+        // Add search steps
+        if (searchTerm) {
+          fallbackSteps.push({
+            description: `Search for "${searchTerm}"`,
+            action: { 
+              type: 'type' as const, 
+              selector: ['textarea[name="q"]', 'input[type="search"]', 'input[name="q"]', 'input[placeholder*="search" i]', '#search'],
+              text: searchTerm 
+            },
+            completed: false,
+            retryCount: 0
+          });
+          
+          fallbackSteps.push({
+            description: 'Submit search',
+            action: { type: 'press' as const, key: 'Enter' },
+            completed: false,
+            retryCount: 0
+          });
         }
-      ];
+        
+        // Add click first result if mentioned
+        if (taskLower.includes('click') && taskLower.includes('first')) {
+          fallbackSteps.push({
+            description: 'Wait for results',
+            action: { type: 'wait' as const, duration: 2000 },
+            completed: false,
+            retryCount: 0
+          });
+          
+          fallbackSteps.push({
+            description: 'Click first result',
+            action: { 
+              type: 'click' as const, 
+              selector: ['h3 a', '.g a', '[data-testid="result"] a', 'a[href]:not([href^="#"])']
+            },
+            completed: false,
+            retryCount: 0
+          });
+        }
+        
+        this.taskSteps = fallbackSteps.length > 0 ? fallbackSteps : [
+          {
+            description: 'Take screenshot',
+            action: { type: 'screenshot' as const, name: 'fallback' },
+            completed: false,
+            retryCount: 0
+          }
+        ];
+      } else if (taskLower.includes('go to') || taskLower.includes('navigate')) {
+        // Check if this is a complex command that shouldn't be handled as simple navigation
+        const isComplexCommand = taskLower.includes(' and ') || 
+                               taskLower.includes('search') ||
+                               taskLower.includes('click') ||
+                               taskLower.includes('type') ||
+                               taskLower.includes('fill');
+        
+        if (!isComplexCommand) {
+          // Extract URL or site name for simple navigation commands only
+          const urlMatch = taskLower.match(/(?:go to|navigate to)\\s+([^\\s]+(?:\\s+[^\\s]*[.](?:com|org|net|edu|gov))?)/);
+          let url = urlMatch ? urlMatch[1].trim() : '';
+          
+          // Convert common site names to URLs
+          if (url === 'google') url = 'https://www.google.com';
+          else if (url === 'amazon') url = 'https://www.amazon.com';
+          else if (url && !url.startsWith('http')) url = `https://${url}`;
+          
+          if (url) {
+            this.taskSteps = [
+              {
+                description: `Navigate to ${url}`,
+                action: { type: 'navigate', url },
+                completed: false,
+                retryCount: 0
+              }
+            ];
+          } else {
+            // If we can't extract a valid URL, fall back to generic steps
+            this.taskSteps = [
+              {
+                description: 'Navigate to URL',
+                action: { type: 'navigate', url: this.currentScript.url },
+                completed: false,
+                retryCount: 0
+              },
+              {
+                description: 'Wait for page load',
+                action: { type: 'wait', duration: 3000 },
+                completed: false,
+                retryCount: 0
+              },
+              {
+                description: 'Take screenshot',
+                action: { type: 'screenshot', name: 'initial' },
+                completed: false,
+                retryCount: 0
+              }
+            ];
+          }
+        } else {
+          // For complex commands, don't try to parse as navigation - use generic fallback
+          log.warn(`[TASK_BREAKDOWN] Complex command detected, using generic fallback: "${this.currentScript.description}"`);
+          this.taskSteps = [
+            {
+              description: 'Navigate to URL',
+              action: { type: 'navigate', url: this.currentScript.url },
+              completed: false,
+              retryCount: 0
+            },
+            {
+              description: 'Wait for page load',
+              action: { type: 'wait', duration: 3000 },
+              completed: false,
+              retryCount: 0
+            },
+            {
+              description: 'Take screenshot',
+              action: { type: 'screenshot', name: 'initial' },
+              completed: false,
+              retryCount: 0
+            }
+          ];
+        }
+      } else {
+                // Generic fallback
+        this.taskSteps = [
+          {
+            description: 'Navigate to URL',
+            action: { type: 'navigate', url: this.currentScript.url },
+            completed: false,
+            retryCount: 0
+          },
+          {
+            description: 'Wait for page load',
+            action: { type: 'wait', duration: 3000 },
+            completed: false,
+            retryCount: 0
+          },
+          {
+            description: 'Take screenshot',
+            action: { type: 'screenshot', name: 'initial' },
+            completed: false,
+            retryCount: 0
+          }
+        ];
+      }
     }
   }
 
@@ -400,18 +591,27 @@ export class IntelligentAutomation {
       return undefined;
     };
 
-    switch (step.actionType || step.type) {
+    // Support multiple field names that the AI might use
+    const actionType = step.actionType || step.type || step.action;
+    const value = step.value || step.text || step.content;
+    const key = step.key || step.value || 'Enter';
+
+    log.info(`[ACTION_DEBUG] Step actionType: ${actionType}, value: ${value}, key: ${key}`);
+    log.info(`[ACTION_DEBUG] Full step object: ${JSON.stringify(step)}`);
+
+    switch (actionType) {
       case 'navigate':
-        return { type: 'navigate', url: step.value || step.url };
+        return { type: 'navigate', url: value || step.url };
       case 'click':
         return { type: 'click', selector: getSelectors() };
       case 'type':
-        return { type: 'type', selector: getSelectors(), text: step.value || step.text };
+        return { type: 'type', selector: getSelectors(), text: value };
       case 'fill':
         // Handle fill as type action
-        return { type: 'type', selector: getSelectors(), text: step.value || step.text };
+        return { type: 'type', selector: getSelectors(), text: value };
       case 'press':
-        return { type: 'press', selector: getSelectors(), key: step.key || 'Enter' };
+        log.info(`[ACTION_DEBUG] Creating press action with key: ${key}, selectors: ${JSON.stringify(getSelectors())}`);
+        return { type: 'press', selector: getSelectors(), key: key };
       case 'scroll':
         return { 
           type: 'scroll', 
@@ -426,33 +626,15 @@ export class IntelligentAutomation {
           selector: getSelectors()
         };
       case 'screenshot':
-        return { type: 'screenshot', name: step.value || step.name || 'screenshot' };
-      case 'goBack':
-      case 'back':
-        return { type: 'goBack', waitUntil: step.waitUntil || 'load' };
-      case 'goForward':
-      case 'forward':
-        return { type: 'goForward', waitUntil: step.waitUntil || 'load' };
-      case 'reload':
-      case 'refresh':
-        return { type: 'reload', waitUntil: step.waitUntil || 'load' };
-      case 'newTab':
-      case 'openTab':
-        return { type: 'newTab', url: step.url || step.value };
-      case 'switchTab':
-      case 'selectTab':
-        return { 
-          type: 'switchTab', 
-          index: step.index,
-          url: step.url,
-          title: step.title
-        };
-      case 'closeTab':
-        return { type: 'closeTab', index: step.index };
+        return { type: 'screenshot', name: step.name || 'step' };
       default:
-        // If no type matches, return a wait action
-        log.warn(`Unknown action type: ${step.actionType || step.type}, defaulting to wait`);
-        return { type: 'wait', duration: 1000 };
+        log.warn(`Unknown action type: ${actionType}, defaulting to wait`);
+        log.warn(`Full step causing issue: ${JSON.stringify(step)}`);
+        return { 
+          type: 'wait', 
+          duration: 2000,
+          selector: undefined
+        };
     }
   }
 
@@ -493,6 +675,19 @@ export class IntelligentAutomation {
       
       // Take screenshot immediately after action
       const screenshot = await this.browser.takeScreenshot(`step_${stepIndex}`);
+      
+      // Add screenshot to the array for the result
+      if (screenshot) {
+        this.screenshots.push(screenshot);
+        log.info(`[DEBUG] Added screenshot to array. Total screenshots: ${this.screenshots.length}`);
+      } else {
+        log.warn(`[DEBUG] No screenshot returned from takeScreenshot`);
+      }
+      
+      // Trigger screenshot callback if available
+      if (this.onScreenshotCapture && screenshot) {
+        this.onScreenshotCapture(screenshot);
+      }
       
       // Capture page state after action
       const pageStateAfter = await this.capturePageState();
@@ -633,7 +828,15 @@ export class IntelligentAutomation {
       
       // Record failure feedback
       if (step.action) {
+        // Take failure screenshot
         const screenshot = await this.browser.takeScreenshot(`failure_${stepIndex}_${step.retryCount}`);
+        
+        // Trigger screenshot callback if available
+        if (this.onScreenshotCapture && screenshot) {
+          this.onScreenshotCapture(screenshot);
+        }
+        
+        // Handle special cases
         const pageHTML = await this.browser.getPageHTML();
         
         await this.feedbackManager.recordFeedback({
@@ -779,7 +982,7 @@ try {
         
         // Get code-specific response
         const codeResponse = await this.openai.chat.completions.create({
-          model: 'o4-mini',
+          model: 'gpt-4.1-2025-04-14',
           messages: [
             {
               role: 'system',
@@ -1325,7 +1528,7 @@ Return as JSON:
 
       // Analyze HTML with AI
       const response = await this.openai.chat.completions.create({
-        model: 'o4-mini',
+        model: 'gpt-4.1-2025-04-14',
         messages: [
           {
             role: 'system',
@@ -1540,7 +1743,7 @@ Return as JSON:
       ];
 
       const response = await this.openai.chat.completions.create({
-        model: 'o4-mini',
+        model: 'gpt-4.1-2025-04-14',
         messages,
         max_tokens: 4000,
         temperature: 0.3,
@@ -1752,7 +1955,8 @@ Return as JSON:
       if (!expectScript) return null;
       
       // In interactive mode, show the expect script and ask for confirmation
-      if (this.persistBrowser) {
+      // Skip confirmation if no readline interface is available (API mode)
+      if (this.persistBrowser && this.externalReadline !== undefined) {
         // Clear separation from previous output
         console.log('\n');
         console.log(chalk.blue('════════════════════════════════════════════════════════════'));
@@ -1899,6 +2103,12 @@ Return as JSON:
    * Ask user if the action was successful
    */
   private async askUserForActionSuccess(step: TaskStep, stepIndex: number): Promise<boolean> {
+    // In API mode (no readline), assume success
+    if (this.externalReadline === undefined) {
+      log.info(`[API MODE] Auto-confirming step ${stepIndex + 1} as successful`);
+      return true;
+    }
+    
     console.log('\n');
     console.log(chalk.blue('════════════════════════════════════════════════════════════'));
     console.log(chalk.cyan('🎯 Action Confirmation'));

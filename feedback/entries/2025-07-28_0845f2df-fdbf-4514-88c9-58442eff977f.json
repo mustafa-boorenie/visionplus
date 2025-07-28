@@ -1,0 +1,16 @@
+{
+  "id": "0845f2df-fdbf-4514-88c9-58442eff977f",
+  "timestamp": "2025-07-28T14:26:22.868Z",
+  "url": "",
+  "action": {
+    "type": "navigate",
+    "url": ""
+  },
+  "success": false,
+  "error": "User indicated action was not successful",
+  "pageContext": {
+    "html": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"### Page state\\n- Page URL: about:blank\\n- Page Title: \\n- Page Snapshot:\\n```yaml\\n\\n```\\n\"\n    }\n  ]\n}",
+    "screenshot": "step_0-1753712777168.png",
+    "selectors": []
+  }
+}

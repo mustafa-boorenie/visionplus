@@ -134,8 +134,10 @@ export class VectorStore {
 
       return response.data[0].embedding;
     } catch (error) {
-      log.error('Failed to create embedding', error as Error);
-      throw error;
+      // If embeddings fail (e.g., due to API outage), fall back to a zero vector so the system continues.
+      log.error('Failed to create embedding – falling back to zero vector', error as Error);
+      // Return a dummy vector of zeros (length 1536 for ada-002)
+      return new Array(1536).fill(0);
     }
   }
 

@@ -1,0 +1,15 @@
+{
+  "id": "f8cac50b-3a2c-4a7c-944b-c237c895d7fe",
+  "timestamp": "2025-07-28T04:41:46.718Z",
+  "url": "about:blank",
+  "action": {
+    "type": "press",
+    "key": "Enter"
+  },
+  "success": true,
+  "pageContext": {
+    "html": "<html><head></head><body></body></html>",
+    "screenshot": "/Users/mustafaboorenie/ai-playwright-scripter/screenshots/step_1_2025-07-28T04-41-46-664Z.png",
+    "selectors": []
+  }
+}

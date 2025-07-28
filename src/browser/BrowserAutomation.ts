@@ -170,19 +170,19 @@ export class BrowserAutomation implements IBrowserAutomation {
         case 'search': {
           // Try common search box patterns
           const searchPatterns = [
+            this.page.locator('textarea[name="q"]:visible').first(),  // Google uses textarea - check first
             this.page.getByRole('searchbox').first(),
             this.page.getByRole('textbox', { name: /search|find|query|keyword/i }).first(),
             this.page.locator('input[type="search"]:visible').first(),
             this.page.locator('input[placeholder*="search" i]:visible').first(),
             this.page.locator('input[placeholder*="find" i]:visible').first(),
-            this.page.locator('input[aria-label*="search" i]:visible').first(),
             this.page.locator('input[name="q"]:visible').first(),
             this.page.locator('input[name="search"]:visible').first(),
             this.page.locator('input[name="term"]:visible').first(),
-            this.page.locator('textarea[name="q"]:visible').first(),  // Google uses textarea
             this.page.locator('#search:visible').first(),
             this.page.locator('.search-input:visible').first(),
-            this.page.locator('.search-box:visible').first()
+            this.page.locator('.search-box:visible').first(),
+            // Note: Avoid input[aria-label*="search"] as it may match submit buttons
           ];
 
           for (const pattern of searchPatterns) {
@@ -387,16 +387,26 @@ export class BrowserAutomation implements IBrowserAutomation {
     if (action.duration) {
       log.action(`Waiting ${action.duration}ms`);
       await this.page!.waitForTimeout(action.duration);
-    } else if (action.selector) {
+    } else if (action.selector && action.selector !== undefined) {
       const selectorStr = Array.isArray(action.selector) ? action.selector[0] : action.selector;
       log.action(`Waiting for ${selectorStr}`, { state: action.state });
       
       // For wait actions, we just need to wait for any of the selectors
       const candidates = Array.isArray(action.selector) ? action.selector : [action.selector];
       
+      // Filter out undefined/null selectors
+      const validCandidates = candidates.filter(s => s && typeof s === 'string');
+      
+      if (validCandidates.length === 0) {
+        // No valid selectors, fall back to a default timeout
+        log.action('No valid selectors provided, falling back to 2000ms timeout');
+        await this.page!.waitForTimeout(2000);
+        return;
+      }
+      
       // Try each selector until one is found
       let found = false;
-      for (const selector of candidates) {
+      for (const selector of validCandidates) {
         try {
           await this.page!.waitForSelector(selector, {
             state: action.state || 'visible',
@@ -410,8 +420,12 @@ export class BrowserAutomation implements IBrowserAutomation {
       }
       
       if (!found) {
-        throw new Error(`None of the selectors became ${action.state || 'visible'}: ${candidates.join(', ')}`);
+        throw new Error(`None of the selectors became ${action.state || 'visible'}: ${validCandidates.join(', ')}`);
       }
+    } else {
+      // No duration or selector specified, use default timeout
+      log.action('No duration or selector specified, using default 2000ms timeout');
+      await this.page!.waitForTimeout(2000);
     }
   }
 

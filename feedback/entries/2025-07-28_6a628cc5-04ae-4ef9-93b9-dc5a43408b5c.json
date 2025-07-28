@@ -1,0 +1,16 @@
+{
+  "id": "6a628cc5-04ae-4ef9-93b9-dc5a43408b5c",
+  "timestamp": "2025-07-28T14:26:22.996Z",
+  "url": "",
+  "action": {
+    "type": "navigate",
+    "url": ""
+  },
+  "success": false,
+  "error": "User indicated action was not successful - entering recovery mode",
+  "pageContext": {
+    "html": "{\n  \"content\": [\n    {\n      \"type\": \"text\",\n      \"text\": \"### Page state\\n- Page URL: about:blank\\n- Page Title: \\n- Page Snapshot:\\n```yaml\\n\\n```\\n\"\n    }\n  ]\n}",
+    "screenshot": "failure_0_0-1753712782877.png",
+    "selectors": []
+  }
+}

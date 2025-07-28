@@ -1,0 +1,13 @@
+{
+  "name": "playwright-browser-server",
+  "version": "1.0.0",
+  "description": "Playwright browser server for Docker container",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "playwright": "1.54.1"
+  }
+} 

@@ -6,6 +6,10 @@ import { SequenceManager } from '../utils/SequenceManager';
 import { AutomationExecutionResult } from '../types';
 import { log } from '../utils/logger';
 import fs from 'fs-extra'; // Added for file deletion
+import dotenv from 'dotenv';
+
+// Load environment variables from .env.local
+dotenv.config({ path: '.env.local' });
 
 /**
  * Session context for interactive mode

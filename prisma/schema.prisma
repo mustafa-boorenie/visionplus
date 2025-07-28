@@ -1,0 +1,165 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  lastActivity    DateTime    @default(now())
+  status          String      @default("idle") // idle, running, error, completed
+  startUrl        String?
+  currentUrl      String?
+  isActive        Boolean     @default(true)
+  
+  // Relations
+  commands        Command[]
+  screenshots     Screenshot[]
+  sequence        Sequence?   @relation(fields: [sequenceId], references: [id])
+  sequenceId      String?
+  
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Command {
+  id              String      @id @default(cuid())
+  sessionId       String
+  session         Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  
+  // Command details
+  command         String
+  arguments       Json?       // Store arguments as JSON
+  
+  // Execution tracking
+  status          String      @default("pending") // pending, running, completed, failed
+  startedAt       DateTime?
+  completedAt     DateTime?
+  success         Boolean?
+  executionTime   Int?        // in milliseconds
+  errors          Json        @default("[]") // Store errors as JSON array
+  result          Json?       // Store execution result as JSON
+  
+  // AI-generated steps
+  steps           CommandStep[]
+  
+  // Screenshots taken during this command
+  screenshots     Screenshot[]
+  
+  @@index([sessionId])
+  @@index([startedAt])
+}
+
+model CommandStep {
+  id              String      @id @default(cuid())
+  commandId       String
+  command         Command     @relation(fields: [commandId], references: [id], onDelete: Cascade)
+  
+  stepNumber      Int
+  description     String
+  action          Json        // Store the action details as JSON
+  completed       Boolean     @default(false)
+  retryCount      Int         @default(0)
+  duration        Int?        // in milliseconds
+  error           String?
+  
+  @@unique([commandId, stepNumber])
+  @@index([commandId])
+}
+
+model Screenshot {
+  id              String      @id @default(cuid())
+  sessionId       String
+  session         Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  commandId       String?
+  command         Command?    @relation(fields: [commandId], references: [id], onDelete: Cascade)
+  
+  filename        String
+  fullPath        String
+  relativePath    String
+  capturedAt      DateTime    @default(now())
+  
+  // Optional metadata
+  pageUrl         String?
+  pageTitle       String?
+  description     String?
+  
+  @@index([sessionId])
+  @@index([commandId])
+  @@index([capturedAt])
+}
+
+model Sequence {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  description     String?
+  category        String?
+  tags            Json        @default("[]") // Store tags as JSON array
+  
+  // Sequence content
+  originalPrompt  String
+  editedPrompt    String?
+  script          Json        // Store the Playwright script
+  url             String?     // Starting URL for the sequence
+  
+  // Metadata
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  usageCount      Int         @default(0)
+  successRate     Float       @default(0)
+  
+  // Relations
+  sessions        Session[]   // Sessions that executed this sequence
+  executions      SequenceExecution[]
+  
+  @@index([name])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model SequenceExecution {
+  id              String      @id @default(cuid())
+  sequenceId      String
+  sequence        Sequence    @relation(fields: [sequenceId], references: [id], onDelete: Cascade)
+  
+  executedAt      DateTime    @default(now())
+  success         Boolean
+  executionTime   Int         // in milliseconds
+  errors          Json        @default("[]") // Store errors as JSON array
+  
+  @@index([sequenceId])
+  @@index([executedAt])
+}
+
+model Feedback {
+  id              String      @id @default(cuid())
+  createdAt       DateTime    @default(now())
+  
+  // Feedback context
+  actionType      String
+  selector        String?
+  pageUrl         String?
+  elementFound    Boolean?
+  
+  // Feedback result
+  success         Boolean
+  errorMessage    String?
+  
+  // Optional AI-related data
+  recoveryAttempt Json?
+  suggestedSelector String?
+  
+  @@index([actionType])
+  @@index([createdAt])
+}
