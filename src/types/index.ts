@@ -104,6 +104,15 @@ export interface PressAction {
 }
 
 /**
+ * Solve CAPTCHA action
+ */
+export interface SolveCaptchaAction {
+  type: 'solve_captcha';
+  taskContext?: string;
+  previousAttempts?: any[];
+}
+
+/**
  * Union type for all browser actions
  */
 export type BrowserAction = 
@@ -115,6 +124,7 @@ export type BrowserAction =
   | SelectAction 
   | ScreenshotAction
   | PressAction
+  | SolveCaptchaAction
   | GoBackAction
   | GoForwardAction
   | ReloadAction

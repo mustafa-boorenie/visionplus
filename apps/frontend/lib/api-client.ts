@@ -124,6 +124,17 @@ class ApiClient {
     return response.data;
   }
 
+  async clearInactiveSessions(): Promise<{ cleared: number; success: boolean }> {
+    try {
+      const response = await this.axiosInstance.post('/api/sessions/clear-inactive');
+      return response.data;
+    } catch (error) {
+      console.error('Failed to clear inactive sessions:', error);
+      // Return a failed response instead of throwing
+      return { cleared: 0, success: false };
+    }
+  }
+
   // Command Execution
   async executeCommand(
     sessionId: string,

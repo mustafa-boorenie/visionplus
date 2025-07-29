@@ -18,6 +18,23 @@ export class DockerBrowserService {
   }
   
   /**
+   * Wait for Docker daemon to be available
+   */
+  private async waitForDaemon(maxRetries: number = 30): Promise<void> {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        await this.docker.info();
+        log.info('Docker daemon is available');
+        return;
+      } catch (error) {
+        log.info(`Waiting for Docker daemon (attempt ${i + 1}/${maxRetries})...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    throw new Error('Docker daemon not available after waiting');
+  }
+
+  /**
    * Build the Docker image if it doesn't exist
    */
   async ensureImage(): Promise<void> {
@@ -39,6 +56,9 @@ export class DockerBrowserService {
     startUrl?: string;
     headless?: boolean;
   }): Promise<DockerBrowserSession> {
+    // Wait for Docker daemon before proceeding
+    await this.waitForDaemon();
+
     await this.ensureImage();
     
     // Create container
@@ -82,9 +102,27 @@ export class DockerBrowserService {
   /**
    * Wait for container API to be ready
    */
-  private async waitForContainer(apiUrl: string, maxRetries: number = 60): Promise<void> {
+  private async waitForContainer(apiUrl: string, maxRetries: number = 120): Promise<void> {
     log.info(`Waiting for container to be ready at ${apiUrl}...`);
     
+    // First, wait for port to be accessible (container is starting)
+    for (let i = 0; i < 30; i++) {
+      try {
+        // Just try to connect to the port
+        await axios.get(apiUrl, { timeout: 1000 }).catch(() => {
+          // We don't care about the response, just that the port is open
+        });
+        log.info(`Container port is accessible after ${i + 1} attempts`);
+        break;
+      } catch (error) {
+        if (i % 10 === 9) {
+          log.info(`Waiting for container port to open (attempt ${i + 1}/30)...`);
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    // Then wait for health endpoint to respond successfully
     for (let i = 0; i < maxRetries; i++) {
       try {
         const response = await axios.get(`${apiUrl}/health`, { timeout: 2000 });
@@ -95,14 +133,14 @@ export class DockerBrowserService {
       } catch (error: any) {
         // Log every 10th attempt to avoid spam
         if (i % 10 === 9) {
-          log.info(`Container not ready yet (attempt ${i + 1}/${maxRetries}): ${error.message || 'Connection failed'}`);
+          log.info(`Container health check pending (attempt ${i + 1}/${maxRetries}): ${error.message || 'Not ready yet'}`);
         }
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    log.error(`Container failed to start within ${maxRetries} seconds`);
-    throw new Error(`Container failed to start within timeout. Try rebuilding the Docker image: docker build -t ai-playwright-browser:latest -f docker/playwright-browser/Dockerfile .`);
+    log.error(`Container failed to become healthy within ${maxRetries} seconds`);
+    throw new Error(`Container failed to start within timeout. The container is running but the browser initialization may have failed.`);
   }
   
   /**
@@ -155,6 +193,32 @@ export class DockerBrowserService {
         throw new Error(`Screenshot failed: ${error.response?.data?.error || error.message}`);
       }
       throw error;
+    }
+  }
+  
+  /**
+   * Check Docker container health status
+   */
+  async checkDockerHealth(containerId: string): Promise<boolean> {
+    try {
+      const container = this.docker.getContainer(containerId);
+      const containerInfo = await container.inspect();
+      
+      // Check if container is running
+      if (containerInfo.State.Status !== 'running') {
+        return false;
+      }
+      
+      // If container has health check configured, use that
+      if (containerInfo.State.Health) {
+        return containerInfo.State.Health.Status === 'healthy';
+      }
+      
+      // Otherwise, just check if it's running
+      return true;
+    } catch (error) {
+      log.error(`Failed to check container health for ${containerId}:`, error as Error);
+      return false;
     }
   }
   

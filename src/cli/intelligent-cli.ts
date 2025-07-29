@@ -4,6 +4,7 @@ import { program } from 'commander';
 import { IntelligentAutomation } from '../automation/IntelligentAutomation';
 import { InteractiveMode } from './interactive-mode';
 import { validateEnvironment } from '../index';
+import { DockerBrowserAutomation } from '../browser/DockerBrowserAutomation';
 import chalk from 'chalk';
 import fs from 'fs-extra';
 import path from 'path';
@@ -25,6 +26,10 @@ program
   .option('-p, --persist', 'Keep browser open after automation', false)
   .option('--headless', 'Run browser in headless mode', false)
   .action(async (options) => {
+    // Create readline interface for CLI interaction
+    const readline = require('readline');
+    let rl: any = null;
+    
     try {
       // Validate environment
       validateEnvironment();
@@ -36,22 +41,92 @@ program
         return;
       }
 
-      // Create and run automation
+      console.log(chalk.cyan('🐳 Starting Docker browser automation...'));
+      
+      // Create Docker browser automation
+      const dockerBrowser = new DockerBrowserAutomation();
+      await dockerBrowser.initialize();
+      
+      console.log(chalk.green('✅ Docker browser initialized'));
+
+      // Initialize readline interface
+      rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      // Create and run automation with recovery support
       const automation = new IntelligentAutomation(
+        dockerBrowser,
         options.task, 
         options.verbose,
-        options.persist
+        options.persist,
+        false, // isRunningSequence
+        rl, // externalReadline for CLI prompts
+        (screenshotPath: string) => {
+          // Screenshot callback
+          console.log(chalk.blue(`📸 Screenshot captured: ${screenshotPath}`));
+        },
+        async (failureContext: any, recoveryOptions: any[]) => {
+          // Recovery callback for CLI
+          console.log(chalk.red('\n❌ Automation Step Failed'));
+          console.log(chalk.gray(`Step: ${failureContext.step}`));
+          console.log(chalk.gray(`Error: ${failureContext.error}`));
+          console.log(chalk.gray(`Screenshot: ${failureContext.screenshot}`));
+          
+          console.log(chalk.cyan('\n🔧 Recovery Options:'));
+          recoveryOptions.forEach((option, index) => {
+            const confidenceColor = option.confidence >= 0.8 ? 'green' : 
+                                   option.confidence >= 0.6 ? 'yellow' : 'red';
+            console.log(chalk.white(`  ${index + 1}. ${option.description}`));
+            console.log(chalk[confidenceColor](`     Confidence: ${Math.round(option.confidence * 100)}%`));
+            console.log(chalk.gray(`     Reason: ${option.reason}`));
+          });
+          
+          return new Promise((resolve) => {
+            rl.question(chalk.yellow('\nSelect recovery option (1-' + recoveryOptions.length + ') or enter custom command: '), (answer: string) => {
+              const optionIndex = parseInt(answer) - 1;
+              
+              if (optionIndex >= 0 && optionIndex < recoveryOptions.length) {
+                const selectedOption = recoveryOptions[optionIndex];
+                console.log(chalk.green(`✅ Selected: ${selectedOption.description}`));
+                resolve({ 
+                  success: true, 
+                  actions: selectedOption.actions || []
+                });
+              } else {
+                // Custom command
+                console.log(chalk.blue(`🔧 Custom command: ${answer}`));
+                resolve({ 
+                  success: true, 
+                  actions: [{ type: 'command', command: answer }]
+                });
+              }
+            });
+          });
+        }
       );
       
       await automation.execute(options.url);
       
+      // Close readline interface
+      rl.close();
+      
       console.log(chalk.green('\n✨ Automation completed successfully!'));
       
-      if (options.persist) {
+      if (!options.persist) {
+        console.log(chalk.cyan('🧹 Cleaning up Docker browser...'));
+        await dockerBrowser.close();
+      } else {
         console.log(chalk.cyan('💡 Browser kept open. Use interactive mode to continue automation.'));
+        console.log(chalk.yellow('⚠️  Remember to clean up Docker containers when done.'));
       }
 
     } catch (error) {
+      // Ensure readline is closed on error
+      if (rl) {
+        rl.close();
+      }
       console.error(chalk.red('\n❌ Automation failed:'), error);
       process.exit(1);
     }

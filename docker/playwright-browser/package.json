@@ -1,13 +1,21 @@
 {
-  "name": "playwright-browser-server",
+  "name": "playwright-browser-webrtc",
   "version": "1.0.0",
-  "description": "Playwright browser server for Docker container",
+  "description": "Playwright browser with WebRTC streaming support",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "playwright": "1.54.1"
+    "playwright": "1.54.1",
+    "ws": "^8.14.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.1",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 } 

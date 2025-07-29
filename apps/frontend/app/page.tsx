@@ -15,7 +15,7 @@ export default function Home() {
   const queryClient = useQueryClient();
 
   // Query for sessions
-  const { data: sessionsData } = useQuery({
+  const { data: sessionsData, isLoading, refetch: loadSessions } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => apiClient.listSessions(),
     refetchInterval: 5000,
@@ -50,6 +50,23 @@ export default function Home() {
   const handleSequenceExecute = (sequenceName: string) => {
     // Switch to interactive mode to see the execution
     setActiveTab('interactive');
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setActiveTab('interactive'); // Switch to interactive mode to watch the session
+  };
+
+  const handleClearInactiveSessions = async () => {
+    try {
+      const result = await apiClient.clearInactiveSessions();
+      if (result.success) {
+        // Refresh sessions list
+        loadSessions();
+      }
+    } catch (error) {
+      console.error('Failed to clear inactive sessions:', error);
+    }
   };
 
   return (
@@ -146,12 +163,10 @@ export default function Home() {
             <SessionManager
               sessions={sessionsData?.sessions || []}
               activeSessionId={activeSessionId}
-              onSelectSession={(sessionId) => {
-                setActiveSessionId(sessionId);
-                setActiveTab('interactive'); // Switch to interactive mode to watch the session
-              }}
+              onSelectSession={handleSelectSession}
               onCreateSession={handleCreateSession}
-              isLoading={!sessionsData}
+              onClearInactiveSessions={handleClearInactiveSessions}
+              isLoading={isLoading}
             />
           </div>
         )}

@@ -10,8 +10,11 @@ import { RulesEngine } from '../feedback/RulesEngine';
 import { log } from '../utils/logger';
 import { AutomationExecutionResult } from '../types';
 import fs from 'fs-extra';
+import axios from 'axios';
 import { DatabaseService } from '../services/database.service';
 import { DockerBrowserService, DockerBrowserSession } from '../services/docker-browser.service';
+import { RecoveryOption, RecoveryPromptResult, RecoveryPromptSystem } from '../automation/RecoveryPromptSystem';
+import { browserlessService } from '../services/browserless.service';
 
 /**
  * Session state
@@ -21,7 +24,7 @@ interface Session {
   browser?: any; // IBrowserAutomation, now optional
   createdAt: Date;
   lastActivity: Date;
-  status: 'idle' | 'running' | 'error';
+  status: 'idle' | 'running' | 'error' | 'waiting_for_recovery';
   currentCommand?: string;
   history: Array<{
     command: string;
@@ -30,6 +33,16 @@ interface Session {
   }>;
   sseClients: Set<{ send: (data: any) => void }>; // Changed from wsClients to sseClients
   dockerSession?: DockerBrowserSession; // Docker session info
+  recoveryState?: {
+    options: RecoveryOption[];
+    failureContext: any;
+    timestamp: Date;
+    resolved?: boolean;
+    selectedOption?: string;
+    customActions?: Array<{ type: string; [key: string]: unknown }>;
+  };
+  webrtcViewerUrl?: string; // For Browserless WebRTC
+  webrtcUrl?: string; // For Browserless WebRTC
 }
 
 /**
@@ -63,11 +76,13 @@ export class EnhancedAPIServer {
   private server: FastifyInstance;
   private port: number;
   private sessions: Map<string, Session> = new Map();
+  private webrtcSessions: Map<string, string> = new Map();
   private sequenceManager: SequenceManager;
   private feedbackManager: FeedbackManager;
   private rulesEngine: RulesEngine;
   private databaseService: DatabaseService;
   private dockerBrowserService: DockerBrowserService;
+  private recoverySystem: RecoveryPromptSystem;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
@@ -83,8 +98,9 @@ export class EnhancedAPIServer {
     this.rulesEngine = new RulesEngine();
     this.databaseService = DatabaseService.getInstance();
     this.dockerBrowserService = new DockerBrowserService();
+    this.recoverySystem = new RecoveryPromptSystem();
     
-    // Start idle session cleanup timer
+    // Start consolidated cleanup timer
     this.startIdleCleanup();
   }
   
@@ -114,8 +130,10 @@ export class EnhancedAPIServer {
     // Register routes
     this.registerRoutes();
     
-    // Start session cleanup interval
-    this.startSessionCleanup();
+    // Add recovery mode routes
+    this.registerRecoveryRoutes();
+    
+    // Cleanup is started in constructor - no need to start it again here
   }
   
   /**
@@ -136,6 +154,15 @@ export class EnhancedAPIServer {
     this.server.get('/api/sessions/:id', this.getSession.bind(this));
     this.server.delete('/api/sessions/:id', this.deleteSession.bind(this));
     this.server.get('/api/sessions', this.listSessions.bind(this));
+    this.server.post('/api/sessions/clear-inactive', this.clearInactiveSessions.bind(this));
+    this.server.get('/api/sessions/:id/screenshots-db', this.getSessionScreenshots.bind(this));
+    
+    // WebRTC routes will be registered when methods exist
+    this.server.post('/api/sessions/:id/webrtc', this.createWebRTCSession.bind(this));
+    this.server.get('/api/sessions/:id/webrtc', this.getWebRTCSession.bind(this));
+    this.server.delete('/api/sessions/:id/webrtc', this.closeWebRTCSession.bind(this));
+    this.server.post('/api/sessions/:id/webrtc/proxy', this.proxyDockerWebRTCSession.bind(this));
+    this.server.post('/api/sessions/:id/webrtc/:webrtcId/control', this.proxyDockerWebRTCControl.bind(this));
     
     // Test endpoint for SSE without Docker
     this.server.post('/api/test/sessions', async (request, reply) => {
@@ -166,11 +193,26 @@ export class EnhancedAPIServer {
     // Server-Sent Events for live streaming
     this.server.get('/api/sessions/:id/stream', async (request, reply) => {
       const sessionId = (request.params as any).id;
+      
+      log.info(`[SSE] Stream connection attempt for session: ${sessionId}`);
+      log.info(`[SSE] Currently active sessions: [${Array.from(this.sessions.keys()).join(', ')}]`);
+      
       const session = this.sessions.get(sessionId);
       
       if (!session) {
-        return reply.status(404).send({ error: 'Session not found' });
+        log.error(`[SSE] Session not found: ${sessionId}. Available sessions: ${this.sessions.size}`);
+        return reply.status(404).send({ 
+          error: 'Session not found',
+          sessionId,
+          availableSessions: Array.from(this.sessions.keys()),
+          message: `Session ${sessionId} does not exist in memory. It may have been cleaned up or never created.`
+        });
       }
+      
+      // Update session activity immediately when SSE connects
+      this.updateSessionActivity(sessionId);
+      
+      log.info(`[SSE] Session found: ${sessionId}, status: ${session.status}, Docker: ${!!session.dockerSession}`);
       
       // Set up SSE headers
       reply.raw.writeHead(200, {
@@ -184,8 +226,11 @@ export class EnhancedAPIServer {
       reply.raw.write(`data: ${JSON.stringify({
         type: 'connected',
         sessionId,
-        status: session.status
+        status: session.status,
+        timestamp: new Date().toISOString()
       })}\n\n`);
+      
+      log.info(`[SSE] Client connected to session ${sessionId}, total clients: ${session.sseClients.size + 1}`);
       
       // Create a simple event emitter wrapper
       const client = {
@@ -193,22 +238,28 @@ export class EnhancedAPIServer {
           try {
             reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
           } catch (error) {
-            console.error('Failed to send SSE data:', error);
+            log.error(`[SSE] Failed to send SSE data to ${sessionId}:`, error as Error);
           }
         }
       };
       
       // Add client to session
-      session.sseClients.add(client); // Changed from wsClients
+      session.sseClients.add(client);
       
       // Handle disconnect
       request.raw.on('close', () => {
-        session.sseClients.delete(client); // Changed from wsClients
+        session.sseClients.delete(client);
+        log.info(`[SSE] Client disconnected from session ${sessionId}, remaining clients: ${session.sseClients.size}`);
       });
       
       // Keep connection alive
       const keepAlive = setInterval(() => {
-        reply.raw.write(':ping\n\n');
+        try {
+          reply.raw.write(':ping\n\n');
+        } catch (error) {
+          log.warn(`[SSE] Keep-alive failed for ${sessionId}, client likely disconnected`);
+          clearInterval(keepAlive);
+        }
       }, 30000);
       
       request.raw.on('close', () => {
@@ -218,6 +269,42 @@ export class EnhancedAPIServer {
     
     // Screenshot serving
     this.server.get('/api/sessions/:id/screenshots/:filename', this.getScreenshot.bind(this));
+    
+    // Docker container health check proxy
+    this.server.get('/api/sessions/:id/health', this.getDockerHealth.bind(this));
+    
+    // Debug endpoint to check session existence and status
+    this.server.get('/api/sessions/:id/debug', async (request, reply) => {
+      const sessionId = (request.params as any).id;
+      const session = this.sessions.get(sessionId);
+      
+      const debugInfo: any = {
+        sessionId,
+        exists: !!session,
+        totalActiveSessions: this.sessions.size,
+        activeSessions: Array.from(this.sessions.keys()),
+        requestedAt: new Date().toISOString()
+      };
+      
+      if (session) {
+        debugInfo.sessionDetails = {
+          status: session.status,
+          createdAt: session.createdAt,
+          lastActivity: session.lastActivity,
+          hasDockerSession: !!session.dockerSession,
+          dockerSessionDetails: session.dockerSession ? {
+            containerId: session.dockerSession.containerId,
+            port: session.dockerSession.port,
+            apiUrl: session.dockerSession.apiUrl
+          } : null,
+          connectedSSEClients: session.sseClients.size,
+          historyCount: session.history.length
+        };
+      }
+      
+      log.info(`[DEBUG] Session debug info for ${sessionId}: ${JSON.stringify(debugInfo, null, 2)}`);
+      return reply.send(debugInfo);
+    });
     
     // Sequence management
     this.server.get('/api/sequences', this.listSequences.bind(this));
@@ -230,6 +317,56 @@ export class EnhancedAPIServer {
     
     // Execute sequence with auto-session creation
     this.server.post('/api/sequences/:name/execute', this.executeSequenceWithNewSession.bind(this));
+  }
+
+  /**
+   * Register recovery mode routes
+   */
+  private registerRecoveryRoutes(): void {
+    // Session-specific recovery endpoint
+    this.server.post('/api/sessions/:sessionId/recovery', async (request, reply) => {
+      try {
+        const { sessionId } = request.params as { sessionId: string };
+        const { optionId, customActions, context } = request.body as {
+          optionId: string;
+          customActions?: Array<{ type: string; [key: string]: unknown }>;
+          context: any;
+        };
+
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+          return reply.status(404).send({ error: 'Session not found' });
+        }
+
+        // Update session status
+        session.status = 'running';
+        
+        // Store recovery selection for processing
+        if (session.recoveryState) {
+          session.recoveryState.resolved = true;
+          session.recoveryState = {
+            ...session.recoveryState,
+            selectedOption: optionId,
+            customActions
+          };
+        }
+
+        // Broadcast recovery resolution to SSE clients
+        session.sseClients.forEach(client => {
+          client.send({
+            type: 'recovery_resolved',
+            optionId,
+            customActions,
+            context
+          });
+        });
+
+        return reply.send({ success: true, message: 'Recovery option applied' });
+      } catch (error) {
+        log.error('Failed to apply recovery option', error as Error);
+        return reply.status(500).send({ error: 'Failed to apply recovery option' });
+      }
+    });
   }
   
   /**
@@ -273,14 +410,19 @@ export class EnhancedAPIServer {
       
       if (process.env.USE_DOCKER !== 'false') {
         try {
+          log.info(`Creating Docker browser session for ${dbSession.id}...`);
           dockerSession = await this.dockerBrowserService.createBrowserSession({
             startUrl,
             headless
           });
+          log.info(`Docker session created successfully for ${dbSession.id}: ${dockerSession.apiUrl}`);
         } catch (error) {
-          log.error('Failed to create Docker session, falling back to no-browser mode', error as Error);
-          // Continue without Docker for testing
+          log.error('Failed to create Docker session:', error as Error);
+          log.warn('Proceeding without Docker container, falling back to in-memory session');
+          dockerSession = undefined;
         }
+      } else {
+        log.info('Docker disabled via USE_DOCKER=false, creating session without container');
       }
       
       // Create session in memory
@@ -288,21 +430,36 @@ export class EnhancedAPIServer {
         id: dbSession.id,
         dockerSession,
         createdAt: dbSession.createdAt,
-        lastActivity: dbSession.lastActivity,
-        status: dbSession.status,
+        lastActivity: new Date(), // Always use current time to prevent immediate cleanup
+        status: dbSession.status as 'idle' | 'running' | 'error' | 'waiting_for_recovery',
         history: [],
         sseClients: new Set()
       };
       
       this.sessions.set(dbSession.id, session);
       
-      log.info(`Created session ${dbSession.id}${dockerSession ? ` with Docker container ${dockerSession.containerId}` : ' without Docker (test mode)'}`);
+      // Also update database with current timestamp
+      try {
+        await this.databaseService.updateSession(dbSession.id, {
+          lastActivity: session.lastActivity
+        });
+      } catch (dbUpdateError) {
+        log.warn(`Failed to update session lastActivity in database: ${dbUpdateError}`);
+      }
+      
+      const statusMessage = dockerSession 
+        ? `Created session ${dbSession.id} with Docker container ${dockerSession.containerId} on port ${dockerSession.port}`
+        : `Created session ${dbSession.id} without Docker (test mode or Docker unavailable)`;
+      
+      log.info(statusMessage);
       
       return reply.send({
         sessionId: dbSession.id,
         createdAt: session.createdAt,
         status: session.status,
-        containerPort: dockerSession?.port
+        containerPort: dockerSession?.port,
+        dockerAvailable: !!dockerSession,
+        message: statusMessage
       });
     } catch (error) {
       log.error('Failed to create session', error as Error);
@@ -392,12 +549,38 @@ export class EnhancedAPIServer {
           const buffer = Buffer.from(screenshot, 'base64');
           await fs.writeFile(screenshotPath, buffer);
           
-          log.info(`Screenshot captured: ${screenshotFilename}`);
+          // Get current page URL and title
+          let pageUrl: string | undefined;
+          let pageTitle: string | undefined;
+          try {
+            const response = await axios.post(`${session.dockerSession.apiUrl}/evaluate`, {
+              script: '({ url: window.location.href, title: document.title })'
+            });
+            pageUrl = response.data?.result?.url;
+            pageTitle = response.data?.result?.title;
+          } catch (e) {
+            log.debug('Could not get page info for screenshot');
+          }
+          
+          // Save screenshot to database
+          const savedScreenshot = await this.databaseService.saveScreenshot({
+            sessionId,
+            commandId: dbCommand?.id,
+            filename: screenshotFilename,
+            fullPath: screenshotPath,
+            pageUrl,
+            pageTitle,
+            description: `Screenshot after command: ${command}`
+          });
+          
+          log.info(`Screenshot captured and saved to DB: ${screenshotFilename} (URL: ${pageUrl || 'N/A'})`);
           
           // Broadcast screenshot event
           this.broadcastToSession(sessionId, {
             type: 'screenshot',
-            filename: screenshotFilename
+            filename: screenshotFilename,
+            pageUrl,
+            pageTitle
           });
           
         } catch (screenshotError) {
@@ -526,15 +709,21 @@ export class EnhancedAPIServer {
       status: memorySession ? memorySession.status : dbSession.status,
       currentUrl,
       currentCommand: memorySession?.currentCommand,
-      historyCount: dbSession.commands?.length || 0,
+      historyCount: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands.length : 0,
       connectedClients: memorySession?.sseClients.size || 0,
-      commands: dbSession.commands,
-      screenshots: dbSession.screenshots
+      commands: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands : [],
+      screenshots: Array.isArray((dbSession as any).screenshots) ? (dbSession as any).screenshots : [],
+      // Include dockerSession info that WebRTC viewer expects
+      dockerSession: memorySession?.dockerSession ? {
+        containerId: memorySession.dockerSession.containerId,
+        port: memorySession.dockerSession.port,
+        apiUrl: memorySession.dockerSession.apiUrl
+      } : null
     });
   }
   
   /**
-   * Delete a session
+   * Delete session
    */
   private async deleteSession(
     request: FastifyRequest<{ Params: { id: string } }>,
@@ -542,24 +731,40 @@ export class EnhancedAPIServer {
   ): Promise<any> {
     try {
       const { id: sessionId } = request.params;
-      
       const session = this.sessions.get(sessionId);
-      if (session) {
-        // Stop Docker container
-        if (session.dockerSession) {
-          await this.dockerBrowserService.destroySession(session.dockerSession.containerId);
-        }
-        
-        // Remove from memory
-        this.sessions.delete(sessionId);
+      
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
       }
       
-      // Update database
+      // Clean up Docker container if exists
+      if (session.dockerSession) {
+        try {
+          await this.dockerBrowserService.destroySession(session.dockerSession.containerId);
+          log.info(`Docker container destroyed for session ${sessionId}`);
+        } catch (error) {
+          log.error(`Failed to destroy Docker container for session ${sessionId}:`, error as Error);
+        }
+      }
+      
+      // Mark session as inactive in database before removing from memory
       try {
         await this.databaseService.deactivateSession(sessionId);
+        log.info(`Session ${sessionId} marked as inactive in database`);
       } catch (error) {
-        log.warn(`Failed to deactivate session in database: ${error}`);
+        log.error(`Failed to deactivate session ${sessionId} in database:`, error as Error);
       }
+      
+      // Clean up SSE clients
+      session.sseClients.forEach(client => {
+        // SSE clients are automatically cleaned up when connection closes
+        client.send({ type: 'session_closing' });
+      });
+      
+      // Remove from memory
+      this.sessions.delete(sessionId);
+      
+      log.info(`Session ${sessionId} deleted successfully`);
       
       return reply.send({ success: true });
     } catch (error) {
@@ -575,28 +780,314 @@ export class EnhancedAPIServer {
     request: FastifyRequest,
     reply: FastifyReply
   ): Promise<any> {
-    // Get sessions from database
+    // Get sessions from database with includeInactive: false to hide inactive sessions
     const { sessions: dbSessions, total } = await this.databaseService.listSessions({
-      includeInactive: true,
-      limit: 100
+      includeInactive: false // Only show active sessions
     });
     
-    // Enhance with memory session data if available
+    // Enhance with memory state
     const sessions = dbSessions.map(dbSession => {
       const memorySession = this.sessions.get(dbSession.id);
+      
       return {
-        id: dbSession.id,
-        createdAt: dbSession.createdAt,
-        lastActivity: dbSession.lastActivity,
-        status: memorySession ? memorySession.status : dbSession.status,
-        commandCount: dbSession.commands?.length || 0,
-        screenshotCount: dbSession.screenshots?.length || 0,
-        sequenceName: dbSession.sequence?.name,
+        ...dbSession,
+        connectedClients: memorySession?.sseClients.size || 0,
+        status: memorySession?.status || dbSession.status,
+        currentCommand: memorySession?.currentCommand,
+        dockerAvailable: !!memorySession?.dockerSession,
+        commandCount: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands.length : 0,
+        screenshotCount: Array.isArray((dbSession as any).screenshots) ? (dbSession as any).screenshots.length : 0,
+        sequenceName: (dbSession as any).sequence?.name,
         isActive: memorySession !== undefined
       };
     });
     
     return reply.send({ sessions, total });
+  }
+  
+  /**
+   * Clear inactive sessions
+   */
+  private async clearInactiveSessions(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const now = Date.now();
+      const timeout = this.IDLE_TIMEOUT_MS; // 5 minutes idle timeout
+      const sessionsToDelete: string[] = [];
+
+      // Find inactive memory sessions
+      for (const [id, session] of this.sessions) {
+        if (now - session.lastActivity.getTime() > timeout) {
+          log.info(`Cleaning up inactive session ${id} (idle for ${Math.round((now - session.lastActivity.getTime()) / 1000 / 60)} minutes)`);
+          sessionsToDelete.push(id);
+        }
+      }
+
+      // Clean up memory sessions
+      let deletedCount = 0;
+      for (const sessionId of sessionsToDelete) {
+        try {
+          await this.deleteSession(
+            { params: { id: sessionId } } as any,
+            { send: () => {}, status: () => ({ send: () => {} }) } as any
+          );
+          deletedCount++;
+        } catch (error) {
+          log.error(`Failed to cleanup session ${sessionId}:`, error as Error);
+        }
+      }
+
+      // Also clean up old database sessions (sessions older than 1 day)
+      let dbCleanedCount = 0;
+      try {
+        dbCleanedCount = await this.databaseService.cleanupOldSessions(1);
+        if (dbCleanedCount > 0) {
+          log.info(`Cleaned up ${dbCleanedCount} old database sessions`);
+        }
+      } catch (error) {
+        log.error('Failed to cleanup old database sessions:', error as Error);
+      }
+
+      return reply.send({ 
+        success: true, 
+        deletedCount, 
+        databaseCleanedCount: dbCleanedCount,
+        message: `Cleaned up ${deletedCount} active sessions and ${dbCleanedCount} old database sessions`
+      });
+    } catch (error) {
+      log.error('Failed to clear inactive sessions', error as Error);
+      return reply.status(500).send({ error: 'Failed to clear inactive sessions' });
+    }
+  }
+
+  /**
+   * Get screenshots from database for a session
+   */
+  private async getSessionScreenshots(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id } = request.params;
+      const screenshots = await this.databaseService.getSessionScreenshots(id);
+      
+      return reply.send({
+        screenshots: screenshots.map(s => ({
+          id: s.id,
+          filename: s.filename,
+          capturedAt: s.capturedAt,
+          pageUrl: s.pageUrl,
+          pageTitle: s.pageTitle,
+          description: s.description,
+          relativePath: s.relativePath
+        }))
+      });
+    } catch (error) {
+      log.error('Failed to get session screenshots:', error as Error);
+      return reply.status(500).send({ 
+        error: 'Failed to get session screenshots' 
+      });
+    }
+  }
+
+  /**
+   * Create WebRTC session for browser streaming
+   */
+  private async createWebRTCSession(
+    request: FastifyRequest<{ Params: { id: string }; Body: { width?: number; height?: number } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id: sessionId } = request.params;
+      const { width, height } = request.body || {};
+      
+      // Check if session exists
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        return reply.status(404).send({ error: 'Session not found' });
+      }
+      
+      // Create WebRTC session via Browserless
+      const webrtcSession = await browserlessService.createWebRTCSession(sessionId, {
+        width,
+        height,
+        blockAds: true,
+        stealth: true,
+      });
+      
+      // Store WebRTC info in session
+      session.webrtcViewerUrl = webrtcSession.viewerUrl;
+      session.webrtcUrl = webrtcSession.webRTCUrl;
+      
+      return reply.send({
+        success: true,
+        viewerUrl: webrtcSession.viewerUrl,
+        webrtcUrl: webrtcSession.webRTCUrl,
+      });
+    } catch (error) {
+      log.error('Failed to create WebRTC session', error as Error);
+      return reply.status(500).send({ error: 'Failed to create WebRTC session' });
+    }
+  }
+
+  /**
+   * Get WebRTC session info
+   */
+  private async getWebRTCSession(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id: sessionId } = request.params;
+      
+      const webrtcSession = browserlessService.getSession(sessionId);
+      if (!webrtcSession) {
+        return reply.status(404).send({ error: 'WebRTC session not found' });
+      }
+      
+      return reply.send({
+        success: true,
+        viewerUrl: webrtcSession.viewerUrl,
+        webrtcUrl: webrtcSession.webRTCUrl,
+      });
+    } catch (error) {
+      log.error('Failed to get WebRTC session', error as Error);
+      return reply.status(500).send({ error: 'Failed to get WebRTC session' });
+    }
+  }
+
+  /**
+   * Close WebRTC session
+   */
+  private async closeWebRTCSession(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id: sessionId } = request.params;
+      
+      await browserlessService.closeSession(sessionId);
+      
+      // Clear WebRTC info from session
+      const session = this.sessions.get(sessionId);
+      if (session) {
+        delete session.webrtcViewerUrl;
+        delete session.webrtcUrl;
+      }
+      
+      return reply.send({ success: true });
+    } catch (error) {
+      log.error('Failed to close WebRTC session', error as Error);
+      return reply.status(500).send({ error: 'Failed to close WebRTC session' });
+    }
+  }
+  
+  /**
+   * Proxy WebRTC session creation to Docker container
+   */
+  private async proxyDockerWebRTCSession(
+    request: FastifyRequest<{ 
+      Params: { id: string };
+      Body: any 
+    }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id: sessionId } = request.params;
+      const session = this.sessions.get(sessionId);
+      
+      if (!session || !session.dockerSession) {
+        return reply.status(404).send({ 
+          error: 'Docker session not available',
+          details: 'Session does not exist or Docker container is not running'
+        });
+      }
+      
+      // Proxy the request to the Docker container
+      try {
+        const response = await axios.post(
+          `${session.dockerSession.apiUrl}/webrtc`,
+          request.body,
+          { timeout: 10000 }
+        );
+        
+        // Store WebRTC session ID for this session if provided
+        if (response.data.webrtcId) {
+          this.webrtcSessions.set(sessionId, response.data.webrtcId);
+        }
+        
+        return reply.send(response.data);
+      } catch (containerError: any) {
+        // If container returns 501, forward it
+        if (containerError.response?.status === 501) {
+          return reply.status(501).send({
+            error: 'WebRTC not implemented in container',
+            details: containerError.response?.data?.message || 'WebRTC functionality is not yet available in the browser container',
+            sessionId,
+            dockerAvailable: true
+          });
+        }
+        throw containerError;
+      }
+    } catch (error) {
+      log.error('Failed to proxy create WebRTC session', error as Error);
+      return reply.status(500).send({ 
+        error: 'Failed to create WebRTC session',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
+  }
+  
+  /**
+   * Proxy WebRTC control messages to Docker container
+   */
+  private async proxyDockerWebRTCControl(
+    request: FastifyRequest<{ 
+      Params: { id: string; webrtcId: string };
+      Body: any 
+    }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const { id: sessionId, webrtcId } = request.params;
+      const session = this.sessions.get(sessionId);
+      
+      if (!session || !session.dockerSession) {
+        return reply.status(404).send({ 
+          error: 'Docker session not available' 
+        });
+      }
+      
+      // Proxy the request to the Docker container
+      try {
+        const response = await axios.post(
+          `${session.dockerSession.apiUrl}/webrtc/${webrtcId}/control`,
+          request.body,
+          { timeout: 5000 }
+        );
+        
+        return reply.send(response.data);
+      } catch (containerError: any) {
+        // If container returns 501, forward it
+        if (containerError.response?.status === 501) {
+          return reply.status(501).send({
+            error: 'WebRTC control not implemented in container',
+            details: containerError.response?.data?.message || 'WebRTC control functionality is not yet available',
+            sessionId,
+            webrtcId
+          });
+        }
+        throw containerError;
+      }
+    } catch (error) {
+      log.error('Failed to proxy WebRTC control', error as Error);
+      return reply.status(500).send({ 
+        error: 'Failed to proxy WebRTC control',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      });
+    }
   }
   
   /**
@@ -637,6 +1128,69 @@ export class EnhancedAPIServer {
     return reply
       .type('image/png')
       .send(buffer);
+  }
+
+  /**
+   * Get Docker container health status
+   */
+  private async getDockerHealth(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const sessionId = request.params.id;
+      const session = this.sessions.get(sessionId);
+
+      if (!session || !session.dockerSession) {
+        return reply.status(404).send({ 
+          error: 'Session not found or Docker session not available',
+          status: false
+        });
+      }
+
+      // Check both Docker container status and health endpoint
+      const containerHealthy = await this.dockerBrowserService.checkDockerHealth(session.dockerSession.containerId);
+      
+      if (!containerHealthy) {
+        return reply.send({
+          sessionId,
+          status: false,
+          message: 'Docker container is not running or unhealthy'
+        });
+      }
+
+      // Also check the health endpoint of the application inside the container
+      try {
+        const healthResponse = await axios.get(`${session.dockerSession.apiUrl}/health`, { 
+          timeout: 3000 
+        });
+        
+        const isAppHealthy = healthResponse.status === 200 && healthResponse.data?.status === 'ok';
+        
+        return reply.send({
+          sessionId,
+          status: isAppHealthy,
+          message: isAppHealthy ? 'Docker container and application are healthy' : 'Docker container is running but application is not ready',
+          containerStatus: containerHealthy,
+          appStatus: isAppHealthy
+        });
+      } catch (appError) {
+        return reply.send({
+          sessionId,
+          status: false,
+          message: 'Docker container is running but application is not ready yet',
+          containerStatus: containerHealthy,
+          appStatus: false,
+          appError: (appError as Error).message
+        });
+      }
+    } catch (error) {
+      log.error('Failed to get Docker health status', error as Error);
+      return reply.status(500).send({ 
+        error: 'Failed to get Docker health status',
+        status: false
+      });
+    }
   }
   
   /**
@@ -750,7 +1304,7 @@ export class EnhancedAPIServer {
         // browser, // TODO: Replace with Docker container communication
         createdAt: dbSession.createdAt,
         lastActivity: dbSession.lastActivity,
-        status: dbSession.status,
+        status: dbSession.status as 'idle' | 'running' | 'error' | 'waiting_for_recovery',
         history: [],
         sseClients: new Set() // Changed from wsClients
       };
@@ -910,41 +1464,44 @@ export class EnhancedAPIServer {
   }
   
   /**
-   * Start session cleanup interval
-   */
-  private startSessionCleanup(): void {
-    // Clean up inactive sessions every minute (check more frequently)
-    setInterval(() => {
-      const now = Date.now();
-      const timeout = 5 * 60 * 1000; // 5 minutes idle timeout
-      
-      for (const [id, session] of this.sessions) {
-        if (now - session.lastActivity.getTime() > timeout) {
-          log.info(`Cleaning up inactive session ${id} (idle for ${Math.round((now - session.lastActivity.getTime()) / 1000 / 60)} minutes)`);
-          this.deleteSession(
-            { params: { id } } as any,
-            { send: () => {}, status: () => ({ send: () => {} }) } as any
-          );
-        }
-      }
-    }, 60 * 1000); // Check every minute
-  }
-
-  /**
-   * Start idle session cleanup timer
+   * Start comprehensive session cleanup timer
    */
   private startIdleCleanup(): void {
-    this.cleanupInterval = setInterval(() => {
+    this.cleanupInterval = setInterval(async () => {
       const now = Date.now();
+      const timeout = this.IDLE_TIMEOUT_MS; // 5 minutes
+      const sessionsToDelete: string[] = [];
+      
+      // Check memory sessions for cleanup
       for (const [id, session] of this.sessions) {
-        if (now - session.lastActivity.getTime() > this.IDLE_TIMEOUT_MS) {
+        if (now - session.lastActivity.getTime() > timeout) {
           log.info(`Cleaning up idle session ${id} (inactive for ${Math.round((now - session.lastActivity.getTime()) / 1000 / 60)} minutes)`);
-          this.deleteSession(
-            { params: { id } } as any,
-            { send: () => {}, status: () => ({ send: () => {} }) } as any
-          );
+          sessionsToDelete.push(id);
         }
       }
+      
+      // Clean up identified sessions
+      for (const sessionId of sessionsToDelete) {
+        try {
+          await this.deleteSession(
+            { params: { id: sessionId } } as any,
+            { send: () => {}, status: () => ({ send: () => {} }) } as any
+          );
+        } catch (error) {
+          log.error(`Failed to cleanup session ${sessionId}:`, error as Error);
+        }
+      }
+      
+      // Also clean up old database sessions (sessions older than 1 day)
+      try {
+        const cleanedCount = await this.databaseService.cleanupOldSessions(1);
+        if (cleanedCount > 0) {
+          log.info(`Cleaned up ${cleanedCount} old database sessions`);
+        }
+      } catch (error) {
+        log.error('Failed to cleanup old database sessions:', error as Error);
+      }
+      
     }, this.IDLE_TIMEOUT_MS); // Check every 5 minutes
   }
 

@@ -19,12 +19,8 @@ export class DatabaseService {
       ],
     });
 
-    // Log database events in development
-    if (process.env.NODE_ENV === 'development') {
-      this.prisma.$on('query' as any, (e: any) => {
-        log.debug(`Query: ${e.query} - Params: ${e.params} - Duration: ${e.duration}ms`);
-      });
-    }
+          // Database logging disabled due to type issues
+      // TODO: Re-enable proper database query logging
   }
 
   static getInstance(): DatabaseService {
@@ -259,7 +255,7 @@ export class DatabaseService {
         category: data.category,
         tags: data.tags || [],
         originalPrompt: data.originalPrompt,
-        scriptJson: data.script as any,
+        script: data.script as any,
         url: data.url || data.script.url,
       },
     });

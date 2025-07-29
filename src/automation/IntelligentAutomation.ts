@@ -52,6 +52,10 @@ export class IntelligentAutomation {
   private isRunningSequence: boolean = false;
   private externalReadline?: readline.Interface;
   private onScreenshotCapture?: (filepath: string) => void; // Add screenshot callback
+  private onRecoveryNeeded?: (context: any, options: any[]) => Promise<any>; // Add recovery callback
+  private originalTask: string = '';
+  private shouldShowVisualUpdates: boolean = false; // Add missing property
+  private screenshotHistory: string[] = []; // Add missing property
   
   constructor(
     browserAutomation: IBrowserAutomation,
@@ -60,7 +64,8 @@ export class IntelligentAutomation {
     persistBrowser: boolean = false,
     isRunningSequence: boolean = false,
     externalReadline?: readline.Interface,
-    onScreenshotCapture?: (filepath: string) => void
+    onScreenshotCapture?: (filepath: string) => void,
+    onRecoveryNeeded?: (context: any, options: any[]) => Promise<any>
   ) {
     const apiKey = Config.OPENAI_API_KEY;
     if (!apiKey) {
@@ -79,6 +84,7 @@ export class IntelligentAutomation {
     this.isRunningSequence = isRunningSequence;
     this.externalReadline = externalReadline;
     this.onScreenshotCapture = onScreenshotCapture; // Store callback
+    this.onRecoveryNeeded = onRecoveryNeeded; // Store recovery callback
     
     this.currentScript = {
       name: 'intelligent-automation',
@@ -97,83 +103,108 @@ export class IntelligentAutomation {
     this.executionErrors = [];
     
     try {
-      // Initialize browser based on persistence mode
-      if (this.persistBrowser) {
-        const browserManager = BrowserManager.getInstance();
-        this.browser = await browserManager.getBrowser();
-        
-        // Navigate to start URL if provided and different from current
-        const currentUrl = await this.browser.getCurrentUrl();
-        if (startUrl && startUrl !== currentUrl) {
-          await this.browser.executeAction({ type: 'navigate', url: startUrl });
+      // Store original task for CAPTCHA context
+      this.originalTask = startUrl;
+      
+      const startTime = Date.now();
+      this.shouldShowVisualUpdates = true;
+      this.screenshotHistory = [];
+      
+      const feedbackEnabled = false; // Feedback learning disabled for now
+      
+      log.info(`Starting task execution: ${startUrl}`);
+      log.info(`Feedback learning: ${feedbackEnabled ? 'enabled' : 'disabled'}`);
+      
+      try {
+        // Initialize browser based on persistence mode
+        if (this.persistBrowser) {
+          const browserManager = BrowserManager.getInstance();
+          this.browser = await browserManager.getBrowser();
+          
+          // Navigate to start URL if provided and different from current
+          const currentUrl = await this.browser.getCurrentUrl();
+          if (startUrl && startUrl !== currentUrl) {
+            await this.browser.executeAction({ type: 'navigate', url: startUrl });
+          }
+        } else {
+          // Non-persistent mode - create new browser
+          this.browser = new BrowserAutomation();
+          await this.browser.initialize();
         }
-      } else {
-        // Non-persistent mode - create new browser
-        this.browser = new BrowserAutomation();
-        await this.browser.initialize();
+        
+        await this.vectorStore.initialize();
+        await this.feedbackManager.initialize();
+        await this.rulesEngine.initialize();
+        
+        // Set the URL and description in the current script
+        this.currentScript.url = startUrl;
+        this.currentScript.description = this.taskPrompt;
+        
+        // Load cached script if available
+        // TEMPORARILY DISABLED: Cache is returning incorrect scripts
+        // const cached = await this.scriptRunner.loadFromCache(this.currentScript);
+        // if (cached) {
+        //   log.info('Using cached script');
+        //   this.taskSteps = cached.steps.map(step => ({
+        //     ...step,
+        //     completed: false,
+        //     retryCount: 0
+        //   }));
+        // } else {
+          // Break down the task
+          await this.breakdownTask();
+        // }
+
+        // Initialize progress tracking
+        this.progress.initialize(this.taskSteps.length);
+
+        // Execute steps recursively
+        await this.executeStepsRecursively();
+
+        // Cache successful script - TEMPORARILY DISABLED
+        await this.cacheScript();
+
+        // Generate Playwright test
+        const generatedTestPath = await this.generateTest();
+
+        // Display summary
+        this.progress.displaySummary(true);
+
+        // Export progress log
+        const logPath = path.join('./logs', `progress_${Date.now()}.json`);
+        await this.progress.exportLog(logPath);
+
+        // Return successful execution result
+        return this.getExecutionResult(true, generatedTestPath);
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.executionErrors.push(errorMessage);
+        
+        log.error('Automation failed', error as Error);
+        this.progress.displaySummary(false);
+        
+        // Return failed execution result and still throw for backward compatibility
+        throw error;
+      } finally {
+        // Only close browser if not in persistent mode
+        if (!this.persistBrowser) {
+          await this.browser.close();
+        } else {
+          log.info('[PERSISTENT_MODE] Browser session kept open for next command');
+        }
       }
-      
-      await this.vectorStore.initialize();
-      await this.feedbackManager.initialize();
-      await this.rulesEngine.initialize();
-      
-      // Set the URL and description in the current script
-      this.currentScript.url = startUrl;
-      this.currentScript.description = this.taskPrompt;
-      
-      // Load cached script if available
-      // TEMPORARILY DISABLED: Cache is returning incorrect scripts
-      // const cached = await this.scriptRunner.loadFromCache(this.currentScript);
-      // if (cached) {
-      //   log.info('Using cached script');
-      //   this.taskSteps = cached.steps.map(step => ({
-      //     ...step,
-      //     completed: false,
-      //     retryCount: 0
-      //   }));
-      // } else {
-        // Break down the task
-        await this.breakdownTask();
-      // }
-
-      // Initialize progress tracking
-      this.progress.initialize(this.taskSteps.length);
-
-      // Execute steps recursively
-      await this.executeStepsRecursively();
-
-      // Cache successful script - TEMPORARILY DISABLED
-      await this.cacheScript();
-
-      // Generate Playwright test
-      const generatedTestPath = await this.generateTest();
-
-      // Display summary
-      this.progress.displaySummary(true);
-
-      // Export progress log
-      const logPath = path.join('./logs', `progress_${Date.now()}.json`);
-      await this.progress.exportLog(logPath);
-
-      // Return successful execution result
-      return this.getExecutionResult(true, generatedTestPath);
-
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      this.executionErrors.push(errorMessage);
-      
-      log.error('Automation failed', error as Error);
-      this.progress.displaySummary(false);
-      
-      // Return failed execution result and still throw for backward compatibility
-      throw error;
-    } finally {
-      // Only close browser if not in persistent mode
-      if (!this.persistBrowser) {
-        await this.browser.close();
-      } else {
-        log.info('[PERSISTENT_MODE] Browser session kept open for next command');
-      }
+      log.error('Failed to execute task', error as Error);
+      return {
+        success: false,
+        script: this.currentScript,
+        executionTime: 0,
+        screenshots: [],
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
+        stepResults: [],
+        testFile: undefined
+      };
     }
   }
 
@@ -578,62 +609,64 @@ export class IntelligentAutomation {
   }
 
   /**
-   * Convert step data to browser action
+   * Creates appropriate browser action from task step
    */
   private createActionFromStep(step: any): BrowserAction {
-    // Extract selectors - support both old 'selector' and new 'selectors' format
-    const getSelectors = () => {
-      if (step.selectors && Array.isArray(step.selectors)) {
-        return step.selectors;
-      } else if (step.selector) {
-        return step.selector; // Keep as string or array
-      }
-      return undefined;
-    };
-
-    // Support multiple field names that the AI might use
-    const actionType = step.actionType || step.type || step.action;
-    const value = step.value || step.text || step.content;
-    const key = step.key || step.value || 'Enter';
-
-    log.info(`[ACTION_DEBUG] Step actionType: ${actionType}, value: ${value}, key: ${key}`);
+    log.info(`[ACTION_DEBUG] Step actionType: ${step.actionType}, value: ${step.value}, key: ${step.key}`);
     log.info(`[ACTION_DEBUG] Full step object: ${JSON.stringify(step)}`);
 
-    switch (actionType) {
+    switch (step.actionType) {
       case 'navigate':
-        return { type: 'navigate', url: value || step.url };
+        return {
+          type: 'navigate',
+          url: step.url,
+          waitUntil: step.waitUntil || 'domcontentloaded'
+        };
+
       case 'click':
-        return { type: 'click', selector: getSelectors() };
+        return {
+          type: 'click',
+          selector: step.selectors || step.selector
+        };
+
       case 'type':
-        return { type: 'type', selector: getSelectors(), text: value };
-      case 'fill':
-        // Handle fill as type action
-        return { type: 'type', selector: getSelectors(), text: value };
+        return {
+          type: 'type',
+          selector: step.selectors || step.selector,
+          text: step.value || step.text
+        };
+
       case 'press':
-        log.info(`[ACTION_DEBUG] Creating press action with key: ${key}, selectors: ${JSON.stringify(getSelectors())}`);
-        return { type: 'press', selector: getSelectors(), key: key };
-      case 'scroll':
-        return { 
-          type: 'scroll', 
-          direction: step.direction || 'down', 
-          amount: step.amount || 500,
-          selector: getSelectors()
+        return {
+          type: 'press',
+          selector: step.selectors || step.selector,
+          key: step.key || step.value || 'Enter'
         };
+
       case 'wait':
-        return { 
-          type: 'wait', 
-          duration: step.waitTime || step.duration || 2000,
-          selector: getSelectors()
+        return {
+          type: 'wait',
+          duration: step.duration || step.value || 1000
         };
+
       case 'screenshot':
-        return { type: 'screenshot', name: step.name || 'step' };
+        return {
+          type: 'screenshot',
+          name: step.name || 'step'
+        };
+
+      case 'solve_captcha':
+        return {
+          type: 'solve_captcha',
+          taskContext: step.taskContext || step.context || this.originalTask || 'CAPTCHA solving requested',
+          previousAttempts: step.previousAttempts || []
+        };
+
       default:
-        log.warn(`Unknown action type: ${actionType}, defaulting to wait`);
-        log.warn(`Full step causing issue: ${JSON.stringify(step)}`);
-        return { 
-          type: 'wait', 
-          duration: 2000,
-          selector: undefined
+        log.warn(`Unknown action type: ${step.actionType}`);
+        return {
+          type: 'wait',
+          duration: 1000
         };
     }
   }
@@ -1098,9 +1131,27 @@ try {
         await this.executeStepsRecursively(stepIndex + 1);
         return;
       } catch (escapeError) {
-        // Escape key didn't solve the issue, try autonomous recovery
-        log.info('[RECOVERY] Escape key press did not resolve the issue, trying autonomous recovery...');
+        // Escape key didn't solve the issue, ask user about recovery mode
+        log.info('[RECOVERY] Escape key press did not resolve the issue...');
         
+        // Ask user if they want to enter recovery mode
+        const wantsRecovery = await this.askUserForRecoveryMode(step, stepIndex);
+        
+        if (wantsRecovery) {
+          // User wants recovery mode - trigger it
+          log.info('[RECOVERY] User chose recovery mode, triggering recovery UI...');
+          const recoveryHandled = await this.triggerRecoveryMode(step, stepIndex);
+          
+          if (recoveryHandled) {
+            // Recovery was successful, continue
+            return;
+          } else {
+            log.warn('[RECOVERY] Recovery mode failed or was cancelled');
+            // Fall through to autonomous recovery
+          }
+        }
+        
+        log.info('[RECOVERY] Proceeding with autonomous recovery...');
         // Try autonomous recovery before falling back to Vision analysis
         const recoverySuccess = await this.autonomousRecovery(step, stepIndex);
         if (recoverySuccess) {
@@ -2190,5 +2241,117 @@ Return as JSON:
     }
     
     return response.toLowerCase() === 'r' ? 'recovery' : 'retry';
+  }
+
+  setTaskContext(task: string): void {
+    this.originalTask = task;
+  }
+
+  /**
+   * Ask user if they want to enter recovery mode
+   */
+  private async askUserForRecoveryMode(step: TaskStep, stepIndex: number): Promise<boolean> {
+    if (!this.externalReadline) {
+      // No interactive interface available, default to recovery mode for web sessions
+      log.info('[RECOVERY] No readline interface available, checking for recovery callback...');
+      return !!this.onRecoveryNeeded;
+    }
+
+    return new Promise((resolve) => {
+      const question = `\n❌ Step failed: "${step.description}"\n🔧 Would you like to enter recovery mode? (y/n): `;
+      
+      this.externalReadline!.question(question, (answer) => {
+        const wants = answer.toLowerCase().trim() === 'y' || answer.toLowerCase().trim() === 'yes';
+        resolve(wants);
+      });
+    });
+  }
+
+  /**
+   * Trigger recovery mode through callback or UI
+   */
+  private async triggerRecoveryMode(step: TaskStep, stepIndex: number): Promise<boolean> {
+    if (!this.onRecoveryNeeded) {
+      log.warn('[RECOVERY] No recovery callback available');
+      return false;
+    }
+
+    try {
+      // Capture failure context
+      log.info('[RECOVERY] Capturing failure context...');
+      
+      const currentUrl = await this.browser.getCurrentUrl();
+      const screenshotPath = await this.browser.takeHighQualityScreenshot(
+        `recovery_${stepIndex}_${step.retryCount}`
+      );
+      
+      const html = await this.browser.getPageHTML();
+      
+      // Generate recovery options using the existing RecoveryPromptSystem
+      const { RecoveryPromptSystem } = await import('./RecoveryPromptSystem');
+      const recoverySystem = new RecoveryPromptSystem();
+      const recoveryOptions = await recoverySystem.generateRecoveryOptions({
+        step: step.description,
+        action: step.action!,
+        error: `Action failed after ${step.retryCount} attempts`,
+        html: html,
+        screenshotPath: screenshotPath,
+        pageState: { url: currentUrl }
+      });
+
+      // Prepare context for frontend
+      const failureContext = {
+        step: step.description,
+        error: `Action failed after ${step.retryCount} attempts`,
+        screenshot: screenshotPath.split('/').pop(), // Get filename only
+        url: currentUrl
+      };
+
+      log.info(`[RECOVERY] Triggering recovery mode with ${recoveryOptions.length} options`);
+      
+      // Trigger recovery mode through callback (this will show the UI and wait for user input)
+      const recoveryResult = await this.onRecoveryNeeded(failureContext, recoveryOptions);
+      
+      if (recoveryResult && recoveryResult.success) {
+        log.info('[RECOVERY] User selected recovery option, applying...');
+        
+        // Apply the recovery actions if any were provided
+        if (recoveryResult.actions && recoveryResult.actions.length > 0) {
+          log.info(`[RECOVERY] Executing ${recoveryResult.actions.length} recovery actions`);
+          
+          for (const action of recoveryResult.actions) {
+            try {
+              await this.browser.executeAction(action);
+              log.info(`[RECOVERY] Executed recovery action: ${action.type}`);
+            } catch (actionError) {
+              log.error(`[RECOVERY] Recovery action failed: ${action.type}`, actionError as Error);
+              // Continue with other actions
+            }
+          }
+        }
+        
+        // Try the original action again
+        try {
+          log.info('[RECOVERY] Retrying original action after recovery...');
+          await this.browser.executeAction(step.action!);
+          
+          // Success! Mark step as completed and continue
+          step.completed = true;
+          await this.executeStepsRecursively(stepIndex + 1);
+          return true;
+          
+        } catch (retryError) {
+          log.error('[RECOVERY] Original action still failed after recovery', retryError as Error);
+          return false;
+        }
+      } else {
+        log.info('[RECOVERY] User cancelled recovery or no recovery result');
+        return false;
+      }
+      
+    } catch (recoveryError) {
+      log.error('[RECOVERY] Failed to execute recovery mode:', recoveryError as Error);
+      return false;
+    }
   }
 } 

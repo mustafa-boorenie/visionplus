@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiClient, Session } from '@/lib/api-client';
 import { Terminal, Play, Square, Camera, Download, Maximize2, Save, Plus, Layers, Minimize2, ChevronLeft, ChevronRight, FileCode } from 'lucide-react';
+import { WebRTCViewer } from './WebRTCViewer';
 
 interface InteractiveModeProps {
   sessionId: string | null;
@@ -465,155 +466,38 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
           </div>
         </div>
 
-        {/* Screenshot Viewer */}
-        {screenshots.length > 0 && (
-          <div className="relative bg-gray-800 flex flex-col overflow-hidden" style={{ width: isScreenshotExpanded ? '60%' : '400px' }}>
-            {/* Screenshot Header */}
+        {/* WebRTC Viewer - Live browser streaming with remote control */}
+        {sessionId && (
+          <div className="relative bg-gray-800 flex flex-col overflow-hidden rounded-lg" style={{ width: '800px', height: '500px' }}>
             <div className="p-3 border-b border-gray-700 flex items-center justify-between">
               <h3 className="text-white font-semibold flex items-center gap-2">
                 <Camera className="w-4 h-4" />
-                Live View
+                Live Browser Stream
               </h3>
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-400">
-                  {currentScreenshotIndex + 1} / {screenshots.length}
+                <span className="text-sm text-green-400">
+                  ● Live
                 </span>
-                <button
-                  onClick={() => setIsScreenshotExpanded(!isScreenshotExpanded)}
-                  className="p-1 text-gray-400 hover:text-white transition-colors"
-                >
-                  {isScreenshotExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-                </button>
               </div>
             </div>
-
-            {/* Main Screenshot Display */}
-            <div 
-              className="relative flex-1 bg-gray-900 overflow-hidden"
-              onMouseEnter={() => setShowScreenshotTimeline(true)}
-              onMouseLeave={() => setShowScreenshotTimeline(false)}
-            >
-              {/* Screenshot Container with 16:9 Aspect Ratio */}
-              <div className="relative w-full h-full flex items-center justify-center">
-                <div 
-                  className={`relative transition-opacity duration-300 ${
-                    screenshotTransitioning ? 'opacity-0' : 'opacity-100'
-                  }`}
-                  style={{ 
-                    width: '100%',
-                    height: '100%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >
-                  {currentScreenshot && sessionId && (
-                    <div className="relative w-full h-full overflow-auto bg-gray-100">
-                      <img
-                        src={apiClient.getScreenshotUrl(sessionId, currentScreenshot)}
-                        alt={`Screenshot ${currentScreenshotIndex + 1}`}
-                        className="w-full h-full"
-                        style={{
-                          objectFit: 'contain',
-                          objectPosition: 'center'
-                        }}
-                        onClick={() => setSelectedScreenshot(currentScreenshot)}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Navigation Arrows */}
-                {screenshots.length > 1 && (
-                  <>
-                    <button
-                      onClick={() => navigateScreenshot(currentScreenshotIndex - 1)}
-                      disabled={currentScreenshotIndex === 0}
-                      className={`absolute left-2 p-2 bg-gray-900 bg-opacity-70 rounded-full text-white transition-all ${
-                        currentScreenshotIndex === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-opacity-90'
-                      }`}
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-                    <button
-                      onClick={() => navigateScreenshot(currentScreenshotIndex + 1)}
-                      disabled={currentScreenshotIndex === screenshots.length - 1}
-                      className={`absolute right-2 p-2 bg-gray-900 bg-opacity-70 rounded-full text-white transition-all ${
-                        currentScreenshotIndex === screenshots.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:bg-opacity-90'
-                      }`}
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {/* Screenshot Timeline */}
-              <div 
-                ref={screenshotTimelineRef}
-                className={`absolute bottom-0 left-0 right-0 bg-gray-900 bg-opacity-90 transition-all duration-300 ${
-                  showScreenshotTimeline ? 'h-16 opacity-100' : 'h-0 opacity-0'
-                }`}
-              >
-                <div className="h-full flex items-center px-4 overflow-x-auto">
-                  <div className="flex gap-2">
-                    {screenshots.map((screenshot, index) => (
-                      <button
-                        key={index}
-                        onClick={() => navigateScreenshot(index)}
-                        className={`relative flex-shrink-0 h-10 w-16 rounded overflow-hidden border-2 transition-all ${
-                          index === currentScreenshotIndex 
-                            ? 'border-cyan-500 scale-110' 
-                            : 'border-gray-700 hover:border-gray-500'
-                        }`}
-                      >
-                        <img
-                          src={sessionId ? apiClient.getScreenshotUrl(sessionId, screenshot) : ''}
-                          alt={`Thumbnail ${index + 1}`}
-                          className="w-full h-full object-cover"
-                        />
-                        {index === screenshots.length - 1 && (
-                          <div className="absolute top-0 right-0 w-2 h-2 bg-green-500 rounded-full m-1" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            
+            <div className="flex-1 p-2">
+              <WebRTCViewer 
+                sessionId={sessionId}
+                onError={(error: Error) => {
+                  setLogs(prev => [...prev, {
+                    type: 'error',
+                    text: `WebRTC Error: ${error.message}`,
+                    timestamp: new Date()
+                  }]);
+                }}
+              />
             </div>
-
-
           </div>
         )}
       </div>
 
-      {/* Screenshot Modal */}
-      {selectedScreenshot && sessionId && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-8"
-          onClick={() => setSelectedScreenshot(null)}
-        >
-          <div className="relative max-w-full max-h-full">
-            <img
-              src={apiClient.getScreenshotUrl(sessionId, selectedScreenshot)}
-              alt="Full size screenshot"
-              className="max-w-full max-h-full object-contain"
-            />
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                const link = document.createElement('a');
-                link.href = apiClient.getScreenshotUrl(sessionId, selectedScreenshot);
-                link.download = selectedScreenshot;
-                link.click();
-              }}
-              className="absolute top-4 right-4 p-2 bg-gray-800 text-white rounded hover:bg-gray-700"
-            >
-              <Download className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Screenshot Modal - Removed */}
 
       {/* Sequence Builder Panel */}
       {showSequenceBuilder && (
