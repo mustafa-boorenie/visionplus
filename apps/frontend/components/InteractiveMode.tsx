@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiClient, Session } from '@/lib/api-client';
-import { Terminal, Play, Square, Camera, Download, Maximize2, Save, Plus, Layers, Minimize2, ChevronLeft, ChevronRight, FileCode } from 'lucide-react';
+import { Terminal, Play, Square, Camera, Download, Maximize2, Save, Plus, Layers, Minimize2, ChevronLeft, ChevronRight, FileCode, Sparkles } from 'lucide-react';
 import { WebRTCViewer } from './WebRTCViewer';
+import { IntelligentInputProcessor } from './IntelligentInputProcessor';
 
 interface InteractiveModeProps {
   sessionId: string | null;
@@ -36,7 +37,9 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
   const [currentScreenshotIndex, setCurrentScreenshotIndex] = useState(0);
   const [isScreenshotExpanded, setIsScreenshotExpanded] = useState(false);
   const [showScreenshotTimeline, setShowScreenshotTimeline] = useState(false);
+  const [showAIProcessor, setShowAIProcessor] = useState(false);
   const [screenshotTransitioning, setScreenshotTransitioning] = useState(false);
+  const [isIntelligentProcessing, setIsIntelligentProcessing] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const screenshotTimelineRef = useRef<HTMLDivElement>(null);
@@ -319,8 +322,10 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
-  const handleExecuteCommand = () => {
+  const handleExecuteCommand = async () => {
     if (!command.trim() || !sessionId) return;
+    
+    setIsIntelligentProcessing(true);
     
     // Add to command history
     setCommandHistory(prev => [...prev, command]);
@@ -329,12 +334,114 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
     // Add command to logs
     setLogs(prev => [...prev, {
       type: 'command',
-      text: `> ${command}`,
+      text: `🤖 AI Processing: "${command}"`,
       timestamp: new Date()
     }]);
     
-    // Execute command
-    executeCommandMutation.mutate({ sessionId, command });
+    try {
+      // Step 1: Get current HTML and screenshot
+      setLogs(prev => [...prev, {
+        type: 'info',
+        text: 'Capturing page context...',
+        timestamp: new Date()
+      }]);
+
+      const contextResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'}/api/sessions/${sessionId}/context`,
+        {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+
+      if (!contextResponse.ok) {
+        throw new Error('Failed to get page context');
+      }
+
+      const context = await contextResponse.json();
+      
+      // Step 2: Send to OpenAI API for intelligent processing
+      setLogs(prev => [...prev, {
+        type: 'info',
+        text: 'Processing with AI...',
+        timestamp: new Date()
+      }]);
+
+      const aiResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'}/api/intelligent/process-input`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            userInput: command.trim(),
+            html: context.html,
+            screenshot: context.screenshot,
+            url: context.url,
+            timestamp: Date.now()
+          })
+        }
+      );
+
+      if (!aiResponse.ok) {
+        const errorData = await aiResponse.json();
+        throw new Error(errorData.error || 'Failed to process input with AI');
+      }
+
+      const aiResult = await aiResponse.json();
+      
+      // Step 3: Execute the generated script
+      setLogs(prev => [...prev, {
+        type: 'info',
+        text: `Executing ${aiResult.script.steps?.length || 0} automation steps...`,
+        timestamp: new Date()
+      }]);
+
+      const executionResponse = await fetch(
+        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'}/api/intelligent/execute-script`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            script: aiResult.script,
+            executionId: aiResult.executionId
+          })
+        }
+      );
+
+      if (!executionResponse.ok) {
+        const errorData = await executionResponse.json();
+        throw new Error(errorData.error || 'Failed to execute automation script');
+      }
+
+      const executionResult = await executionResponse.json();
+      
+      // Success feedback
+      setLogs(prev => [...prev, {
+        type: 'response',
+        text: `✓ Successfully executed ${executionResult.completedSteps}/${executionResult.totalSteps} steps`,
+        timestamp: new Date()
+      }]);
+
+      if (executionResult.errors.length > 0) {
+        setLogs(prev => [...prev, {
+          type: 'error',
+          text: `⚠️ ${executionResult.errors.length} steps had errors`,
+          timestamp: new Date()
+        }]);
+      }
+
+    } catch (error) {
+      console.error('Intelligent automation error:', error);
+      setLogs(prev => [...prev, {
+        type: 'error',
+        text: `❌ Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date()
+      }]);
+    } finally {
+      setIsIntelligentProcessing(false);
+    }
     
     // Clear input
     setCommand('');
@@ -402,6 +509,16 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
               <span className="text-sm">Build Sequence</span>
             </button>
           )}
+          {sessionId && (
+            <button
+              onClick={() => setShowAIProcessor(true)}
+              className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
+              title="AI-Generate Script"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span className="text-sm">AI Script</span>
+            </button>
+          )}
           
           {!sessionId && (
             <button
@@ -438,32 +555,32 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
             <div ref={logsEndRef} />
           </div>
 
-                      {/* Command Input */}
+            {/* Command Input */}
             <div className="border-t border-gray-700 p-4 flex-shrink-0">
-            <div className="flex gap-2">
-              <input
-                ref={inputRef}
-                type="text"
-                value={command}
-                onChange={(e) => setCommand(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={sessionId ? "Enter command (e.g., 'navigate to google.com')" : "Start a session first"}
-                disabled={!sessionId || executeCommandMutation.isPending}
-                className="flex-1 px-3 py-2 bg-gray-800 text-white border border-gray-700 rounded focus:outline-none focus:border-cyan-500 disabled:opacity-50"
-              />
-              <button
-                onClick={handleExecuteCommand}
-                disabled={!sessionId || !command.trim() || executeCommandMutation.isPending}
-                className="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {executeCommandMutation.isPending ? (
-                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <Play className="w-5 h-5" />
-                )}
-              </button>
+              <div className="flex gap-2">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={command}
+                  onChange={(e) => setCommand(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={sessionId ? "Enter command (e.g., 'search for red socks', 'fill contact form')" : "Start a session first"}
+                  disabled={!sessionId || isIntelligentProcessing}
+                  className="flex-1 px-3 py-2 bg-gray-800 text-white border border-gray-700 rounded focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                />
+                <button
+                  onClick={handleExecuteCommand}
+                  disabled={!sessionId || !command.trim() || isIntelligentProcessing}
+                  className="px-4 py-2 bg-cyan-600 text-white rounded hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isIntelligentProcessing ? (
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <Play className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
         </div>
 
         {/* WebRTC Viewer - Live browser streaming with remote control */}
@@ -493,6 +610,51 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
                 }}
               />
             </div>
+          </div>
+        )}
+
+        {/* Intelligent Input Processor */}
+        {showAIProcessor && (
+          <div className="relative bg-gray-800 flex flex-col overflow-hidden rounded-lg" style={{ width: '800px', height: '500px' }}>
+            <div className="p-3 border-b border-gray-700 flex items-center justify-between">
+              <h3 className="text-white font-semibold flex items-center gap-2">
+                <Square className="w-4 h-4" />
+                Intelligent Input Processor
+              </h3>
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-blue-400">
+                  ● Intelligent
+                </span>
+              </div>
+            </div>
+            
+                         <div className="flex-1 p-2">
+               <button onClick={() => setShowAIProcessor(false)} className="absolute top-2 right-2 text-gray-400 hover:text-white">✕</button>
+               <IntelligentInputProcessor
+                 sessionId={sessionId!}
+                 onScriptGenerated={(result) => {
+                   setLogs(prev => [...prev, 
+                     {
+                       type: 'info',
+                       text: `AI Generated Script: "${result.userInput}"`,
+                       timestamp: new Date()
+                     },
+                     {
+                       type: 'response',
+                       text: `✓ Executed automation script successfully`,
+                       timestamp: new Date()
+                     }
+                   ]);
+                 }}
+                 onError={(error: Error) => {
+                   setLogs(prev => [...prev, {
+                     type: 'error',
+                     text: `Intelligent Input Error: ${error.message}`,
+                     timestamp: new Date()
+                   }]);
+                 }}
+               />
+             </div>
           </div>
         )}
       </div>

@@ -23,6 +23,22 @@ let browserAutomation: BrowserAutomation | null = null;
 const pcs = new Map<string, RTCPeerConnection>();
 const intervals = new Map<string, NodeJS.Timeout>();
 
+// Frame management system
+interface FrameCapture {
+  isCapturing: boolean;
+  lastCaptureTime: number;
+  consecutiveFailures: number;
+  adaptiveTimeout: number;
+  frameQueue: number;
+}
+
+const frameStates = new Map<string, FrameCapture>();
+const MIN_TIMEOUT = 2000; // 2 seconds minimum
+const MAX_TIMEOUT = 10000; // 10 seconds maximum
+const BASE_TIMEOUT = 3000; // 3 seconds base
+const MAX_CONSECUTIVE_FAILURES = 5;
+const MAX_FRAME_QUEUE = 2;
+
 // Initialize browser on startup
 async function initBrowser() {
   const startUrl = process.env.START_URL || 'about:blank';
@@ -35,6 +51,106 @@ async function initBrowser() {
     await browserAutomation.executeAction({ type: 'navigate', url: startUrl });
   }
   console.log('Browser automation server running on port', PORT);
+}
+
+// Adaptive frame capture function
+async function captureFrame(sessionId: string, source: any): Promise<boolean> {
+  if (!browserAutomation?.currentPage) {
+    return false;
+  }
+
+  let frameState = frameStates.get(sessionId);
+  if (!frameState) {
+    frameState = {
+      isCapturing: false,
+      lastCaptureTime: 0,
+      consecutiveFailures: 0,
+      adaptiveTimeout: BASE_TIMEOUT,
+      frameQueue: 0
+    };
+    frameStates.set(sessionId, frameState);
+  }
+
+  // Skip if already capturing or queue is full
+  if (frameState.isCapturing || frameState.frameQueue >= MAX_FRAME_QUEUE) {
+    return false;
+  }
+
+  frameState.isCapturing = true;
+  frameState.frameQueue++;
+  
+  try {
+    const startTime = Date.now();
+    
+    // Adaptive timeout based on recent failures
+    const timeout = Math.min(MAX_TIMEOUT, 
+      Math.max(MIN_TIMEOUT, frameState.adaptiveTimeout + (frameState.consecutiveFailures * 1000))
+    );
+    
+    const png = await browserAutomation.currentPage.screenshot({ 
+      omitBackground: true,
+      timeout: timeout,
+      type: 'png',
+      quality: 70 // Reduce quality for better performance
+    });
+    
+    const captureTime = Date.now() - startTime;
+    
+    // Process in next tick to avoid blocking
+    setImmediate(async () => {
+      try {
+        const { data, info } = await sharp(png)
+          .resize(1280, 720, { fit: 'contain' }) // Reduce resolution
+          .raw()
+          .toBuffer({ resolveWithObject: true });
+        
+        source.onFrame({ width: info.width, height: info.height, data });
+        
+        // Success - reduce timeout and reset failures
+        frameState!.consecutiveFailures = 0;
+        frameState!.adaptiveTimeout = Math.max(MIN_TIMEOUT, frameState!.adaptiveTimeout - 200);
+        frameState!.lastCaptureTime = Date.now();
+        
+        if (captureTime > 2000) {
+          console.warn(`Slow frame capture for ${sessionId}: ${captureTime}ms`);
+        }
+      } catch (processError) {
+        console.error(`Frame processing error for ${sessionId}:`, processError);
+        frameState!.consecutiveFailures++;
+      } finally {
+        frameState!.isCapturing = false;
+        frameState!.frameQueue--;
+      }
+    });
+    
+    return true;
+  } catch (error) {
+    frameState.isCapturing = false;
+    frameState.frameQueue--;
+    frameState.consecutiveFailures++;
+    
+    // Increase timeout on failures
+    frameState.adaptiveTimeout = Math.min(MAX_TIMEOUT, frameState.adaptiveTimeout + 500);
+    
+    if (error.name === 'TimeoutError' || (error.message && error.message.includes('Timeout'))) {
+      console.warn(`Screenshot timeout for ${sessionId} (${frameState.consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}) - timeout: ${frameState.adaptiveTimeout}ms`);
+    } else {
+      console.error(`Frame capture error for ${sessionId}:`, error);
+    }
+    
+    // If too many consecutive failures, pause briefly
+    if (frameState.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      console.warn(`Too many failures for ${sessionId}, pausing for 3 seconds`);
+      setTimeout(() => {
+        if (frameStates.has(sessionId)) {
+          frameStates.get(sessionId)!.consecutiveFailures = 0;
+        }
+      }, 3000);
+      return false;
+    }
+    
+    return false;
+  }
 }
 
 // Health check endpoint
@@ -107,10 +223,38 @@ app.post('/screenshot', async (req, res) => {
 
 // WebRTC streaming endpoint (offer from client)
 app.post('/webrtc', async (req, res) => {
-  const { sdp } = req.body;
+  const { sdp, sessionId } = req.body;
+  
+  // Check if WebRTC dependencies are available
+  if (!RTCPeerConnection || !nonstandard || !sharp) {
+    return res.status(501).json({ 
+      error: 'WebRTC not available', 
+      message: 'WebRTC dependencies not installed in this container',
+      dependencies: {
+        wrtc: !!RTCPeerConnection,
+        sharp: !!sharp
+      }
+    });
+  }
+  
   if (!browserAutomation || !browserAutomation.currentPage) {
     return res.status(500).json({ error: 'Browser not initialized' });
   }
+  
+  // Check if session already has an active WebRTC connection
+  if (sessionId && pcs.has(sessionId)) {
+    console.log(`Cleaning up existing WebRTC session for ${sessionId}`);
+    const existingPc = pcs.get(sessionId);
+    const existingInterval = intervals.get(sessionId);
+    
+    if (existingPc) existingPc.close();
+    if (existingInterval) clearInterval(existingInterval);
+    
+    pcs.delete(sessionId);
+    intervals.delete(sessionId);
+    frameStates.delete(sessionId); // Clean up frame state
+  }
+  
   try {
     const pc = new RTCPeerConnection({ iceServers: [] });
     // Create video source track
@@ -131,21 +275,75 @@ app.post('/webrtc', async (req, res) => {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    // Frame capture loop (30fps)
-    const interval = setInterval(async () => {
-      try {
-        const png = await browserAutomation!.currentPage!.screenshot({ omitBackground: true });
-        const { data, info } = await sharp(png).raw().toBuffer({ resolveWithObject: true });
-        source.onFrame({ width: info.width, height: info.height, data });
-      } catch (e) {
-        console.error('Frame capture error:', e);
+    // Start frame capture after a brief delay to let things settle
+    setTimeout(() => {
+      // Optimized frame capture loop (15fps for better performance)
+      const interval = setInterval(async () => {
+        if (!browserAutomation?.currentPage) {
+          console.log('Browser page no longer available, stopping frame capture');
+          clearInterval(interval);
+          frameStates.delete(sessionId);
+          return;
+        }
+        
+        // Attempt frame capture with adaptive logic
+        await captureFrame(sessionId, source);
+      }, 1000 / 24); // 15fps for reduced load and smoother typing
+      
+      // Store interval for cleanup
+      if (sessionId) {
+        intervals.set(sessionId, interval);
       }
-    }, 1000 / 30);
-    pcs.set(req.body.sessionId, pc);
-    intervals.set(req.body.sessionId, interval);
+    }, 500); // 500ms delay before starting capture
+    
+    // Store connections with proper sessionId
+    if (sessionId) {
+      pcs.set(sessionId, pc);
+      console.log(`WebRTC session established for ${sessionId}`);
+    } else {
+      console.warn('WebRTC session created without sessionId');
+    }
   } catch (err) {
     console.error('WebRTC setup error:', err);
-    res.status(500).json({ error: 'Failed to establish WebRTC session', detail: err.message });
+    res.status(500).json({ 
+      error: 'Failed to establish WebRTC session', 
+      detail: err instanceof Error ? err.message : 'Unknown error',
+      sessionId: sessionId || 'unknown'
+    });
+  }
+});
+
+// WebRTC session cleanup endpoint
+app.delete('/webrtc/:id', async (req, res) => {
+  const sessionId = req.params.id;
+  
+  try {
+    const pc = pcs.get(sessionId);
+    const interval = intervals.get(sessionId);
+    
+    if (pc) {
+      pc.close();
+      pcs.delete(sessionId);
+      console.log(`Closed WebRTC peer connection for session ${sessionId}`);
+    }
+    
+    if (interval) {
+      clearInterval(interval);
+      intervals.delete(sessionId);
+      console.log(`Cleared frame capture interval for session ${sessionId}`);
+    }
+    
+    // Clean up frame state
+    frameStates.delete(sessionId);
+    
+    res.json({ success: true, sessionId });
+  } catch (error) {
+    console.error('WebRTC cleanup error:', error);
+    res.status(500).json({ 
+      error: 'Failed to cleanup WebRTC session', 
+      detail: error instanceof Error ? error.message : 'Unknown error',
+      sessionId 
+    });
   }
 });
 
@@ -176,6 +374,7 @@ process.on('SIGTERM', async () => {
   // clean up WebRTC
   intervals.forEach(i => clearInterval(i));
   pcs.forEach(pc => pc.close());
+  frameStates.clear();
   process.exit(0);
 });
 

@@ -16,18 +16,76 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [remoteControlEnabled, setRemoteControlEnabled] = useState(false);
-  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected' | 'reconnecting'>('connecting');
+  const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected' | 'reconnecting' | 'circuit-breaker' | 'booting'>('booting');
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
-  const maxReconnectAttempts = 5;
+  const [retryDelay, setRetryDelay] = useState(1000); // Start with 1 second
+  const [circuitBreakerInfo, setCircuitBreakerInfo] = useState<{retryAfter: number} | null>(null);
+  const [browserDimensions, setBrowserDimensions] = useState({ width: 1280, height: 720 }); // Default to optimized resolution
+  const [useScreenshotFallback, setUseScreenshotFallback] = useState(false);
+  const [lastScreenshot, setLastScreenshot] = useState<string | null>(null);
+  const maxReconnectAttempts = 10;
+  const maxRetryDelay = 30000; // Max 30 seconds
 
+  const [retryTrigger, setRetryTrigger] = useState(0);
+  const initializationRef = useRef(false);
+  
   useEffect(() => {
+    // Reset initialization flag on new session or retry
+    if (retryTrigger > 0) {
+      initializationRef.current = false;
+    }
+    
+    // Prevent multiple initializations
+    if (initializationRef.current) return;
+    
     let mounted = true;
     let pc: RTCPeerConnection | null = null;
     let ws: WebSocket | null = null;
     let mediaStream: MediaStream | null = null;
+    let screenshotInterval: NodeJS.Timeout | null = null;
+
+    // Screenshot fallback function
+    const startScreenshotFallback = async () => {
+      if (screenshotInterval) return; // Already running
+      
+      console.log('Starting screenshot fallback...');
+      screenshotInterval = setInterval(async () => {
+        if (!mounted) return;
+        
+        try {
+          const response = await fetch(
+            `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002'}/api/sessions/${sessionId}/context`,
+            {
+              method: 'GET',
+              headers: { 'Content-Type': 'application/json' }
+            }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            if (data.screenshot && canvasRef.current) {
+              const ctx = canvasRef.current.getContext('2d');
+              if (ctx) {
+                const img = new Image();
+                img.onload = () => {
+                  ctx.drawImage(img, 0, 0, canvasRef.current!.width, canvasRef.current!.height);
+                  setLastScreenshot(data.screenshot);
+                };
+                img.src = `data:image/jpeg;base64,${data.screenshot}`;
+              }
+            }
+          }
+        } catch (error) {
+          console.warn('Screenshot fallback failed:', error);
+        }
+      }, 1000); // 1 FPS for fallback
+    };
+
+    // (Typing detection removed as unnecessary)
 
     const initWebRTCWithCanvas = async () => {
       try {
+        setConnectionState('booting');
         setIsLoading(true);
         setError(null);
 
@@ -45,6 +103,20 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
 
         if (!response.ok) {
           const errorData = await response.json();
+          
+          // Handle rate limiting or circuit breaker response
+          if (response.status === 429) {
+            if (errorData.rateLimit) {
+              setConnectionState('circuit-breaker'); // Reuse circuit-breaker UI for rate limiting
+              setCircuitBreakerInfo({ retryAfter: errorData.retryAfter || 30 });
+              throw new Error(`Rate limit exceeded. Retry in ${errorData.retryAfter || 30}s`);
+            } else if (errorData.circuitBreaker) {
+              setConnectionState('circuit-breaker');
+              setCircuitBreakerInfo({ retryAfter: errorData.retryAfter || 300 });
+              throw new Error(`Circuit breaker is open. Retry in ${errorData.retryAfter || 300}s`);
+            }
+          }
+          
           throw new Error(errorData.error || 'Failed to create WebRTC session');
         }
 
@@ -79,6 +151,7 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           setConnectionState('connected');
           setReconnectAttempts(0); // Reset reconnect attempts on successful connection
           setError(null); // Clear any previous errors
+          setUseScreenshotFallback(false); // Disable fallback when WebSocket works
           // Start streaming
           if (ws) ws.send(JSON.stringify({ type: 'start_stream' }));
         };
@@ -92,16 +165,29 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
                 console.log('Stream ready');
                 setIsLoading(false);
                 setIsStreaming(true);
+                setConnectionState('connected');
                 break;
                 
               case 'frame':
+                
                 // Render frame to canvas
                 if (canvasRef.current && data.frame) {
                   const ctx = canvasRef.current.getContext('2d');
                   if (ctx) {
                     const img = new Image();
                     img.onload = () => {
+                      // Update browser dimensions based on actual image size
+                      if (img.naturalWidth && img.naturalHeight) {
+                        setBrowserDimensions(prev => {
+                          if (prev.width !== img.naturalWidth || prev.height !== img.naturalHeight) {
+                            console.log(`Browser dimensions updated: ${img.naturalWidth}x${img.naturalHeight}`);
+                            return { width: img.naturalWidth, height: img.naturalHeight };
+                          }
+                          return prev;
+                        });
+                      }
                       ctx.drawImage(img, 0, 0, canvasRef.current!.width, canvasRef.current!.height);
+                      setLastScreenshot(data.frame); // Store last screenshot
                     };
                     img.onerror = () => {
                       console.warn('Failed to load frame image');
@@ -118,6 +204,9 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
                   console.log('Recoverable streaming error, continuing...');
                 } else {
                   setError(data.error);
+                  // Enable screenshot fallback on stream errors
+                  setUseScreenshotFallback(true);
+                  startScreenshotFallback();
                 }
                 break;
             }
@@ -128,7 +217,8 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
 
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
-          setConnectionState('disconnected');
+          setUseScreenshotFallback(true);
+          startScreenshotFallback();
           // Don't immediately show error - might be temporary
           setTimeout(() => {
             if (!mounted || connectionState === 'disconnected') {
@@ -141,6 +231,8 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           console.log('WebSocket disconnected:', event.code, event.reason);
           setConnectionState('disconnected');
           setIsStreaming(false);
+          setUseScreenshotFallback(true);
+          startScreenshotFallback();
           
           // Attempt to reconnect if it wasn't a clean close
           if (mounted && event.code !== 1000 && reconnectAttempts < maxReconnectAttempts) {
@@ -156,6 +248,8 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
             }, delay);
           } else if (reconnectAttempts >= maxReconnectAttempts) {
             setError('Failed to reconnect after multiple attempts');
+            setUseScreenshotFallback(true);
+            startScreenshotFallback();
           }
         };
 
@@ -210,23 +304,57 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to initialize streaming';
         console.error('Streaming initialization error:', err);
+        
         if (mounted) {
-          setError(errorMessage);
-          if (onError) {
-            onError(new Error(errorMessage));
+          // Handle circuit breaker case - don't retry immediately
+          if (connectionState === 'circuit-breaker' && circuitBreakerInfo) {
+            setError(`Rate limit exceeded. Retrying in ${circuitBreakerInfo.retryAfter}s`);
+            // Don't auto-retry on rate limits - let user manually retry
+            return;
+          }
+          
+          // Regular retry with exponential backoff
+          if (reconnectAttempts < maxReconnectAttempts) {
+            setConnectionState('reconnecting');
+            setReconnectAttempts(prev => prev + 1);
+            
+            console.log(`Retrying WebRTC connection in ${retryDelay}ms (attempt ${reconnectAttempts + 1}/${maxReconnectAttempts})`);
+            
+            setTimeout(() => {
+              if (mounted) {
+                setConnectionState('connecting');
+                initWebRTCWithCanvas();
+                // Exponential backoff: double the delay, up to max
+                setRetryDelay(prev => Math.min(prev * 2, maxRetryDelay));
+              }
+            }, retryDelay);
+          } else {
+            // Max retries reached
+            setError(`${errorMessage} (Max retries reached)`);
+            setConnectionState('disconnected');
+            if (onError) {
+              onError(new Error(errorMessage));
+            }
           }
         }
       } finally {
-        if (mounted) {
+        if (mounted && connectionState !== 'reconnecting') {
           setIsLoading(false);
         }
       }
     };
 
+    initializationRef.current = true;
     initWebRTCWithCanvas();
 
     return () => {
       mounted = false;
+      initializationRef.current = false;
+      
+      // (Typing detection listeners removed)
+      
+      // Cleanup timers
+      if (screenshotInterval) clearInterval(screenshotInterval);
       
       // Stop streaming
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -245,7 +373,8 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
       wsRef.current = null;
       pcRef.current = null;
     };
-  }, [sessionId, onError]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, retryTrigger]);
 
   const handleRemoteControl = async (event: React.MouseEvent | React.KeyboardEvent) => {
     if (!remoteControlEnabled || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
@@ -253,23 +382,24 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
     try {
       const control: { type: string; x?: number; y?: number; key?: string; text?: string } = { type: '' };
       
+      // Only handle mouse clicks - keyboard input is now handled by IntelligentInputProcessor
       if (event.type === 'click' && canvasRef.current) {
         const rect = canvasRef.current.getBoundingClientRect();
         const x = ((event as React.MouseEvent).clientX - rect.left) / rect.width;
         const y = ((event as React.MouseEvent).clientY - rect.top) / rect.height;
         control.type = 'mouse_click';
-        control.x = Math.round(x * 1920); // Assuming 1920x1080 resolution
-        control.y = Math.round(y * 1080);
-      } else if (event.type === 'keydown') {
-        control.type = 'key';
-        control.key = (event as React.KeyboardEvent).key;
+        // Use actual browser dimensions instead of hardcoded values
+        control.x = Math.round(x * browserDimensions.width);
+        control.y = Math.round(y * browserDimensions.height);
+        console.log(`Click coordinates: canvas(${x.toFixed(3)}, ${y.toFixed(3)}) -> browser(${control.x}, ${control.y})`);
+        
+        // Send control command via WebSocket
+        wsRef.current.send(JSON.stringify({ 
+          type: 'control', 
+          control 
+        }));
       }
-
-      // Send control command via WebSocket
-      wsRef.current.send(JSON.stringify({ 
-        type: 'control', 
-        control 
-      }));
+      // Keyboard input is disabled - use IntelligentInputProcessor instead
     } catch (err) {
       console.error('Remote control error:', err);
     }
@@ -277,14 +407,46 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
 
   if (error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-        <p className="text-red-800">Streaming Error: {error}</p>
-        <button 
-          onClick={() => window.location.reload()} 
-          className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-        >
-          Retry
-        </button>
+      <div className={`border rounded-lg p-4 ${
+        connectionState === 'circuit-breaker' 
+          ? 'bg-yellow-50 border-yellow-200' 
+          : connectionState === 'reconnecting'
+          ? 'bg-blue-50 border-blue-200'
+          : 'bg-red-50 border-red-200'
+      }`}>
+        <p className={`${
+          connectionState === 'circuit-breaker' 
+            ? 'text-yellow-800' 
+            : connectionState === 'reconnecting'
+            ? 'text-blue-800'
+            : 'text-red-800'
+        }`}>
+          {connectionState === 'circuit-breaker' && 'Circuit Breaker: '}
+          {connectionState === 'reconnecting' && 'Reconnecting: '}
+          {connectionState === 'disconnected' && 'Streaming Error: '}
+          {error}
+        </p>
+        {connectionState === 'reconnecting' && (
+          <p className="text-blue-600 text-sm mt-1">
+            Attempt {reconnectAttempts}/{maxReconnectAttempts} - Next retry in {Math.ceil(retryDelay / 1000)}s
+          </p>
+        )}
+        {connectionState !== 'reconnecting' && (
+          <button 
+            onClick={() => {
+              setError(null);
+              setConnectionState('connecting');
+              setCircuitBreakerInfo(null);
+              setReconnectAttempts(0);
+              setRetryDelay(1000);
+              // Trigger re-initialization
+              setRetryTrigger(prev => prev + 1);
+            }} 
+            className="mt-2 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry Connection
+          </button>
+        )}
       </div>
     );
   }
@@ -297,14 +459,17 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${
               connectionState === 'connected' ? 'bg-green-500' : 
+              connectionState === 'booting' ? 'bg-blue-500 animate-pulse' :
               connectionState === 'connecting' || connectionState === 'reconnecting' ? 'bg-yellow-500 animate-pulse' : 
               'bg-red-500'
             }`} />
             <span className="text-sm text-gray-600">
               {connectionState === 'connected' ? 'Connected' : 
+               connectionState === 'booting' ? 'Booting...' :
                connectionState === 'connecting' ? 'Connecting...' : 
                connectionState === 'reconnecting' ? 'Reconnecting...' :
                'Disconnected'}
+               {useScreenshotFallback && connectionState === 'connected' ? ' (Fallback)' : ''}
             </span>
           </div>
           <button
@@ -322,25 +487,43 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
       </div>
 
       <div className="relative bg-gray-900 rounded-lg overflow-hidden">
-        {isLoading && (
+        {(isLoading || connectionState === 'booting') && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-800 z-10">
-            <div className="text-white">Establishing connection...</div>
+            <div className="text-white text-center">
+              {connectionState === 'booting' ? (
+                <div className="flex flex-col items-center space-y-2">
+                  <div className="text-lg">Browser is booting up</div>
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
+                </div>
+              ) : (
+                <div>Establishing connection...</div>
+              )}
+            </div>
           </div>
         )}
         
-        {/* Canvas for WebSocket streaming */}
+        {useScreenshotFallback && !isLoading && (
+          <div className="absolute top-2 right-2 bg-yellow-600 text-white px-2 py-1 rounded text-xs z-20">
+            Screenshot Mode
+          </div>
+        )}
+        
+        {/* Canvas for WebSocket streaming - Click only, no keyboard input */}
         <canvas
           ref={canvasRef}
-          width={1920}
-          height={1080}
+          width={browserDimensions.width}
+          height={browserDimensions.height}
           className="w-full h-auto cursor-pointer"
           style={{ maxHeight: '600px' }}
           onClick={handleRemoteControl}
-          onKeyDown={handleRemoteControl}
-          tabIndex={remoteControlEnabled ? 0 : -1}
+          tabIndex={-1}
         />
         
-        {/* Video element for native WebRTC (hidden by default) */}
+        {/* Video element for native WebRTC (hidden by default) - Click only, no keyboard input */}
         <video
           ref={videoRef}
           autoPlay
@@ -349,15 +532,14 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           className="w-full h-auto"
           style={{ maxHeight: '600px', display: 'none' }}
           onClick={handleRemoteControl}
-          onKeyDown={handleRemoteControl}
-          tabIndex={remoteControlEnabled ? 0 : -1}
+          tabIndex={-1}
         />
       </div>
 
       {isStreaming && (
         <p className="text-sm text-gray-600">
           {remoteControlEnabled 
-            ? 'Click on the screen to control the browser' 
+            ? `Click on the screen to interact. ${useScreenshotFallback ? 'Screenshot fallback active' : 'Live streaming active'} - no flickering when typing.`
             : 'Enable remote control to interact with the browser'}
         </p>
       )}

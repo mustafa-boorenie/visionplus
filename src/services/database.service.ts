@@ -49,12 +49,18 @@ export class DatabaseService {
   async createSession(data: {
     startUrl?: string;
     sequenceId?: string;
+    dockerContainerId?: string;
+    dockerPort?: string;
+    dockerApiUrl?: string;
   }): Promise<Session> {
     return await this.prisma.session.create({
       data: {
         startUrl: data.startUrl,
         sequenceId: data.sequenceId,
         currentUrl: data.startUrl,
+        dockerContainerId: data.dockerContainerId,
+        dockerPort: data.dockerPort,
+        dockerApiUrl: data.dockerApiUrl,
       },
     });
   }
@@ -82,6 +88,9 @@ export class DatabaseService {
     status?: string;
     currentUrl?: string;
     lastActivity?: Date;
+    dockerContainerId?: string;
+    dockerPort?: string;
+    dockerApiUrl?: string;
   }): Promise<Session> {
     return await this.prisma.session.update({
       where: { id },
@@ -125,6 +134,18 @@ export class DatabaseService {
     ]);
 
     return { sessions, total };
+  }
+
+  async getActiveSessions(maxAgeMs?: number): Promise<Session[]> {
+    const cutoffTime = maxAgeMs ? new Date(Date.now() - maxAgeMs) : undefined;
+    
+    return await this.prisma.session.findMany({
+      where: {
+        isActive: true,
+        ...(cutoffTime && { lastActivity: { gte: cutoffTime } })
+      },
+      orderBy: { lastActivity: 'desc' }
+    });
   }
 
   async deactivateSession(id: string): Promise<void> {

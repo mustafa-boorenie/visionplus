@@ -15,6 +15,8 @@ import { DatabaseService } from '../services/database.service';
 import { DockerBrowserService, DockerBrowserSession } from '../services/docker-browser.service';
 import { RecoveryOption, RecoveryPromptResult, RecoveryPromptSystem } from '../automation/RecoveryPromptSystem';
 import { browserlessService } from '../services/browserless.service';
+import { DockerBrowserAutomation } from '../browser/DockerBrowserAutomation';
+import OpenAI from 'openai';
 
 /**
  * Session state
@@ -86,6 +88,17 @@ export class EnhancedAPIServer {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
+  // WebRTC failure tracking
+  private webrtcFailureCount: Map<string, number> = new Map();
+  private webrtcFailureTimestamps: Map<string, number[]> = new Map();
+  private webrtcCircuitBreaker: Map<string, number> = new Map(); // sessionId -> timestamp when circuit opens
+  private webrtcRateLimiter: Map<string, { count: number; resetTime: number }> = new Map();
+  private readonly MAX_WEBRTC_FAILURES = 5;
+  private readonly FAILURE_WINDOW_MS = 60 * 1000; // 1 minute
+  private readonly CIRCUIT_BREAKER_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly RATE_LIMIT_REQUESTS = 15; // Max requests per window (increased for dev)
+  private readonly RATE_LIMIT_WINDOW_MS = 60 * 1000; // 60 seconds (longer window, more stable)
+  
   constructor(port: number = 3000) {
     this.port = port;
     this.server = fastify({
@@ -105,6 +118,68 @@ export class EnhancedAPIServer {
   }
   
   /**
+   * Restore active sessions from database
+   */
+  private async restoreActiveSessions(): Promise<void> {
+    try {
+      log.info('Restoring active sessions from database...');
+      
+      // Get active sessions from database (within last 24 hours to avoid very old sessions)
+      const activeSessions = await this.databaseService.getActiveSessions(24 * 60 * 60 * 1000); // 24 hours
+      
+      let restoredCount = 0;
+      let containerRestoredCount = 0;
+      
+      for (const dbSession of activeSessions) {
+        // Create in-memory session
+        const session: Session = {
+          id: dbSession.id,
+          dockerSession: undefined, // Will be set below if container exists
+          createdAt: dbSession.createdAt,
+          lastActivity: dbSession.lastActivity,
+          status: dbSession.status as 'idle' | 'running' | 'error' | 'waiting_for_recovery',
+          history: [],
+          sseClients: new Set()
+        };
+        
+        // If session has Docker container info, check if container is still running
+        if ((dbSession as any).dockerContainerId && (dbSession as any).dockerApiUrl && (dbSession as any).dockerPort) {
+          try {
+            // Check if the Docker container is still running and accessible
+            const response = await fetch(`${(dbSession as any).dockerApiUrl}/health`, { 
+              method: 'GET',
+              signal: AbortSignal.timeout(5000) // 5 second timeout
+            });
+            
+            if (response.ok) {
+              // Container is still accessible, restore the Docker session
+              session.dockerSession = {
+                containerId: (dbSession as any).dockerContainerId,
+                apiUrl: (dbSession as any).dockerApiUrl,
+                port: (dbSession as any).dockerPort
+              };
+              containerRestoredCount++;
+              log.info(`Restored Docker container ${(dbSession as any).dockerContainerId} for session ${dbSession.id}`);
+            } else {
+              log.warn(`Docker container ${(dbSession as any).dockerContainerId} not accessible for session ${dbSession.id}`);
+            }
+          } catch (error) {
+            log.warn(`Failed to check Docker container ${(dbSession as any).dockerContainerId} for session ${dbSession.id}: ${error}`);
+          }
+        }
+        
+        this.sessions.set(dbSession.id, session);
+        restoredCount++;
+      }
+      
+      log.info(`Restored ${restoredCount} sessions from database, ${containerRestoredCount} with Docker containers`);
+      
+    } catch (error) {
+      log.error('Failed to restore active sessions:', error as Error);
+    }
+  }
+
+  /**
    * Initialize server and routes
    */
   async initialize(): Promise<void> {
@@ -113,6 +188,9 @@ export class EnhancedAPIServer {
     await this.feedbackManager.initialize();
     await this.rulesEngine.initialize();
     await this.databaseService.connect();
+    
+    // Restore active sessions from database
+    await this.restoreActiveSessions();
     
     // Register plugins
     await this.server.register(fastifyCors, {
@@ -317,6 +395,288 @@ export class EnhancedAPIServer {
     
     // Execute sequence with auto-session creation
     this.server.post('/api/sequences/:name/execute', this.executeSequenceWithNewSession.bind(this));
+
+    // Context route for intelligent input
+    this.server.get('/api/sessions/:id/context', async (request, reply) => {
+      try {
+        const sessionId = (request.params as any).id as string;
+        const session = this.sessions.get(sessionId);
+        if (!session || !session.dockerSession) {
+          return reply.status(404).send({ error: 'Session not found or Docker session missing' });
+        }
+
+        const apiUrl = session.dockerSession.apiUrl;
+
+        const [htmlRes, screenshotRes, urlRes] = await Promise.all([
+          axios.get(`${apiUrl}/html`).catch(() => ({ data: { html: '' } })),
+          axios.post(`${apiUrl}/screenshot`).catch(() => ({ data: { data: '' } })),
+          axios.get(`${apiUrl}/url`).catch(() => ({ data: { url: '' } }))
+        ]);
+
+        return reply.send({
+          html: htmlRes.data.html,
+          screenshot: screenshotRes.data.data,
+          url: urlRes.data.url
+        });
+      } catch (err) {
+        log.error('[CONTEXT_ROUTE] Failed:', err as Error);
+        return reply.status(500).send({ error: 'Failed to fetch context' });
+      }
+    });
+
+    // Process user input with OpenAI API
+    this.server.post('/api/intelligent/process-input', async (request, reply) => {
+      try {
+        const { sessionId, userInput, html, screenshot, url, timestamp } = request.body as any;
+
+        if (!sessionId || !userInput) {
+          return reply.status(400).send({ error: 'Missing required fields: sessionId, userInput' });
+        }
+
+        log.info(`[INTELLIGENT_API] Processing input for session ${sessionId}: "${userInput}"`);
+
+        // Use OpenAI to analyze the input with context and generate automation script
+        const openai = new OpenAI({ 
+          apiKey: process.env.OPENAI_API_KEY 
+        });
+
+        const prompt = `You are an expert web automation assistant. Based on the user's request and the current page context, generate a precise automation script.
+
+USER REQUEST: "${userInput}"
+
+CURRENT PAGE CONTEXT:
+- URL: ${url}
+- HTML Content: ${html ? html.substring(0, 5000) + (html.length > 5000 ? '...[truncated]' : '') : 'Not available'}
+- Screenshot: ${screenshot ? 'Available (base64 encoded)' : 'Not available'}
+
+Generate a JSON automation script with this exact structure:
+{
+  "steps": [
+    {
+      "description": "Brief description of what this step does",
+      "actionType": "navigate|click|type|press|wait|screenshot",
+      "selector": "CSS selector (for click/type/press actions)",
+      "selectors": ["array", "of", "selectors"] (alternative to selector),
+      "value": "text to type or key to press",
+      "url": "URL to navigate to (for navigate actions)",
+      "waitTime": 2000 (for wait actions, in milliseconds)
+    }
+  ],
+  "reasoning": "Brief explanation of the automation strategy",
+  "confidence": 0.9 (0.0 to 1.0 confidence score)
+}
+
+GUIDELINES:
+- Analyze the current page HTML to find the best selectors
+- Use multiple selectors when possible for better reliability
+- Be specific and precise in your actions
+- For search tasks: find search fields and use them
+- For form filling: identify form fields accurately
+- For navigation: use current page context to determine next steps
+- If the request is unclear or cannot be fulfilled, suggest alternative actions
+
+Generate the automation script now:`;
+
+        const response = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a web automation expert. Always respond with valid JSON.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.1,
+          max_tokens: 2000
+        });
+
+        const responseContent = response.choices[0].message.content || '';
+        let scriptData;
+
+        const extractJson = (raw: string): string | null => {
+          // Attempt to extract JSON between code fences if present
+          const fenceMatch = raw.match(/```(?:json)?[\s\r\n]*([\s\S]*?)```/i);
+          if (fenceMatch) {
+            return fenceMatch[1].trim();
+          }
+          return raw.trim();
+        };
+
+        const parsedJsonStr = extractJson(responseContent);
+
+        try {
+          scriptData = JSON.parse(parsedJsonStr || '{"steps": [], "reasoning": "Failed to parse response", "confidence": 0.0}');
+        } catch (parseError) {
+          log.error(`[INTELLIGENT_API] Failed to parse OpenAI response: ${(parseError as Error).message}. Raw: ${responseContent.slice(0, 200)}`);
+          scriptData = {
+            steps: [],
+            reasoning: "Failed to parse AI response",
+            confidence: 0.0,
+            error: "Invalid JSON response from AI"
+          };
+        }
+
+        if (!Array.isArray(scriptData.steps) || scriptData.steps.length === 0) {
+          log.warn(`[INTELLIGENT_API] No steps returned from AI for session ${sessionId}. User input: "${userInput}"`);
+        }
+
+        const executionId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        log.info(`[INTELLIGENT_API] Generated script with ${scriptData.steps?.length || 0} steps (confidence: ${scriptData.confidence || 0})`);
+
+        return reply.send({
+          script: scriptData,
+          executionId,
+          userInput,
+          timestamp: Date.now(),
+          processingTime: Date.now() - timestamp
+        });
+
+      } catch (error) {
+        log.error(`[INTELLIGENT_API] Error processing input:`, error as Error);
+        return reply.status(500).send({ 
+          error: 'Failed to process input with AI',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
+
+    // Execute generated automation script
+    this.server.post('/api/intelligent/execute-script', async (request, reply) => {
+      try {
+        const { sessionId, script, executionId } = request.body as any;
+
+        if (!sessionId || !script || !executionId) {
+          return reply.status(400).send({ error: 'Missing required fields: sessionId, script, executionId' });
+        }
+
+        log.info(`[EXECUTION_API] Executing script ${executionId} for session ${sessionId}`);
+
+        // Get session from database
+        const session = this.sessions.get(sessionId);
+        if (!session || !session.dockerSession) {
+          return reply.status(404).send({ error: 'Session not found or Docker session missing' });
+        }
+
+        const apiUrl = session.dockerSession.apiUrl;
+        const results = [];
+        const errors = [];
+
+        // Execute each step in the script
+        for (let i = 0; i < script.steps.length; i++) {
+          const step = script.steps[i];
+          
+          try {
+            log.info(`[EXECUTION_API] Executing step ${i + 1}/${script.steps.length}: ${step.description}`);
+
+            // Convert step to browser action format
+            const action: any = {
+              type: step.actionType
+            };
+
+            switch (step.actionType) {
+              case 'navigate':
+                action.url = step.url;
+                action.waitUntil = step.waitUntil || 'domcontentloaded';
+                break;
+              
+              case 'click':
+                action.selector = step.selectors || step.selector;
+                break;
+              
+              case 'type':
+                action.selector = step.selectors || step.selector;
+                action.text = step.value;
+                break;
+              
+              case 'press':
+                action.key = step.value;
+                if (step.selector) {
+                  action.selector = step.selectors || step.selector;
+                }
+                break;
+              
+              case 'wait':
+                if (step.waitTime) {
+                  action.duration = step.waitTime;
+                } else if (step.selector) {
+                  action.selector = step.selectors || step.selector;
+                  action.state = step.state || 'visible';
+                }
+                break;
+              
+              case 'screenshot':
+                // Screenshots are handled automatically
+                break;
+            }
+
+            // Execute the action via Docker browser
+            const executeResponse = await axios.post(`${apiUrl}/execute`, action);
+            const executeResult = executeResponse.data;
+            
+            if (executeResult.success) {
+              results.push({
+                step: i + 1,
+                description: step.description,
+                success: true,
+                result: executeResult.result
+              });
+              
+              log.info(`[EXECUTION_API] Step ${i + 1} completed successfully`);
+            } else {
+              throw new Error(executeResult.error || 'Action execution failed');
+            }
+
+            // Small delay between actions to prevent overwhelming the browser
+            if (i < script.steps.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+
+          } catch (stepError) {
+            const errorMessage = stepError instanceof Error ? stepError.message : 'Unknown error';
+            
+            errors.push({
+              step: i + 1,
+              description: step.description,
+              error: errorMessage
+            });
+            
+            log.error(`[EXECUTION_API] Step ${i + 1} failed:`, new Error(errorMessage));
+            
+            // Continue with next step unless it's a critical navigation error
+            if (step.actionType === 'navigate') {
+              break; // Stop execution on navigation failures
+            }
+          }
+        }
+
+        const executionResult = {
+          executionId,
+          sessionId,
+          script,
+          results,
+          errors,
+          success: errors.length === 0,
+          completedSteps: results.length,
+          totalSteps: script.steps.length,
+          timestamp: Date.now()
+        };
+
+        log.info(`[EXECUTION_API] Script execution completed: ${results.length}/${script.steps.length} steps successful`);
+
+        return reply.send(executionResult);
+
+      } catch (error) {
+        log.error(`[EXECUTION_API] Error executing script:`, error as Error);
+        return reply.status(500).send({ 
+          error: 'Failed to execute automation script',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
+    });
   }
 
   /**
@@ -438,13 +798,16 @@ export class EnhancedAPIServer {
       
       this.sessions.set(dbSession.id, session);
       
-      // Also update database with current timestamp
+      // Also update database with current timestamp and Docker container info
       try {
         await this.databaseService.updateSession(dbSession.id, {
-          lastActivity: session.lastActivity
+          lastActivity: session.lastActivity,
+          dockerContainerId: dockerSession?.containerId,
+          dockerPort: dockerSession?.port,
+          dockerApiUrl: dockerSession?.apiUrl
         });
       } catch (dbUpdateError) {
-        log.warn(`Failed to update session lastActivity in database: ${dbUpdateError}`);
+        log.warn(`Failed to update session with Docker info in database: ${dbUpdateError}`);
       }
       
       const statusMessage = dockerSession 
@@ -909,6 +1272,9 @@ export class EnhancedAPIServer {
         return reply.status(404).send({ error: 'Session not found' });
       }
       
+      // Update session activity for WebRTC creation
+      this.updateSessionActivity(sessionId);
+      
       // Create WebRTC session via Browserless
       const webrtcSession = await browserlessService.createWebRTCSession(sessionId, {
         width,
@@ -942,6 +1308,9 @@ export class EnhancedAPIServer {
     try {
       const { id: sessionId } = request.params;
       
+      // Update session activity for WebRTC get operations
+      this.updateSessionActivity(sessionId);
+      
       const webrtcSession = browserlessService.getSession(sessionId);
       if (!webrtcSession) {
         return reply.status(404).send({ error: 'WebRTC session not found' });
@@ -967,6 +1336,9 @@ export class EnhancedAPIServer {
   ): Promise<any> {
     try {
       const { id: sessionId } = request.params;
+      
+      // Update session activity for WebRTC close operations
+      this.updateSessionActivity(sessionId);
       
       await browserlessService.closeSession(sessionId);
       
@@ -994,8 +1366,32 @@ export class EnhancedAPIServer {
     }>,
     reply: FastifyReply
   ): Promise<any> {
+    const { id: sessionId } = request.params;
+    
     try {
-      const { id: sessionId } = request.params;
+      
+      // Check rate limiting first
+      const rateLimitInfo = this.isWebRTCRateLimited(sessionId);
+      if (rateLimitInfo.limited) {
+        return reply.status(429).send({
+          error: 'Rate limit exceeded',
+          details: `Too many WebRTC requests. Rate limit resets in ${Math.ceil((rateLimitInfo.resetIn || 0) / 1000)}s`,
+          retryAfter: Math.ceil((rateLimitInfo.resetIn || 0) / 1000),
+          rateLimit: true
+        });
+      }
+      
+      // Check circuit breaker
+      if (this.isWebRTCCircuitBreakerOpen(sessionId)) {
+        const failureInfo = this.getWebRTCFailureInfo(sessionId);
+        return reply.status(429).send({
+          error: 'WebRTC circuit breaker is open',
+          details: `Too many recent failures (${failureInfo.failures}). Circuit breaker will reset in ${Math.ceil((failureInfo.nextRetryIn || 0) / 1000)}s`,
+          retryAfter: Math.ceil((failureInfo.nextRetryIn || 0) / 1000),
+          circuitBreaker: true
+        });
+      }
+      
       const session = this.sessions.get(sessionId);
       
       if (!session || !session.dockerSession) {
@@ -1004,6 +1400,9 @@ export class EnhancedAPIServer {
           details: 'Session does not exist or Docker container is not running'
         });
       }
+      
+      // Update session activity for WebRTC operations
+      this.updateSessionActivity(sessionId);
       
       // Proxy the request to the Docker container
       try {
@@ -1032,10 +1431,17 @@ export class EnhancedAPIServer {
         throw containerError;
       }
     } catch (error) {
-      log.error('Failed to proxy create WebRTC session', error as Error);
+      // Record failure for circuit breaker
+      this.recordWebRTCFailure(sessionId);
+      
+      const failureInfo = this.getWebRTCFailureInfo(sessionId);
+      log.error(`Failed to proxy create WebRTC session (failure ${failureInfo.failures}/${this.MAX_WEBRTC_FAILURES})`, error as Error);
+      
       return reply.status(500).send({ 
         error: 'Failed to create WebRTC session',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
+        failureCount: failureInfo.failures,
+        circuitBreaker: failureInfo.circuitOpen
       });
     }
   }
@@ -1059,6 +1465,9 @@ export class EnhancedAPIServer {
           error: 'Docker session not available' 
         });
       }
+      
+      // Update session activity for WebRTC control operations
+      this.updateSessionActivity(sessionId);
       
       // Proxy the request to the Docker container
       try {
@@ -1463,6 +1872,94 @@ export class EnhancedAPIServer {
     }
   }
   
+  /**
+   * Check if WebRTC circuit breaker is open for a session
+   */
+  private isWebRTCCircuitBreakerOpen(sessionId: string): boolean {
+    const circuitOpenTime = this.webrtcCircuitBreaker.get(sessionId);
+    if (!circuitOpenTime) return false;
+    
+    // Check if circuit breaker timeout has expired
+    if (Date.now() - circuitOpenTime > this.CIRCUIT_BREAKER_TIMEOUT_MS) {
+      this.webrtcCircuitBreaker.delete(sessionId);
+      this.webrtcFailureCount.delete(sessionId);
+      this.webrtcFailureTimestamps.delete(sessionId);
+      return false;
+    }
+    
+    return true;
+  }
+  
+  /**
+   * Record a WebRTC failure and potentially open circuit breaker
+   */
+  private recordWebRTCFailure(sessionId: string): void {
+    const now = Date.now();
+    
+    // Get or initialize failure timestamps
+    let timestamps = this.webrtcFailureTimestamps.get(sessionId) || [];
+    
+    // Remove timestamps outside the failure window
+    timestamps = timestamps.filter(ts => now - ts < this.FAILURE_WINDOW_MS);
+    
+    // Add current failure
+    timestamps.push(now);
+    this.webrtcFailureTimestamps.set(sessionId, timestamps);
+    
+    // Update failure count
+    this.webrtcFailureCount.set(sessionId, timestamps.length);
+    
+    // Open circuit breaker if too many failures
+    if (timestamps.length >= this.MAX_WEBRTC_FAILURES) {
+      this.webrtcCircuitBreaker.set(sessionId, now);
+      log.warn(`WebRTC circuit breaker opened for session ${sessionId} after ${timestamps.length} failures in ${this.FAILURE_WINDOW_MS / 1000}s`);
+    }
+  }
+  
+  /**
+   * Check rate limiting for WebRTC requests
+   */
+  private isWebRTCRateLimited(sessionId: string): { limited: boolean; resetIn?: number } {
+    const now = Date.now();
+    const rateInfo = this.webrtcRateLimiter.get(sessionId);
+    
+    if (!rateInfo || now > rateInfo.resetTime) {
+      // Reset or initialize rate limiter
+      this.webrtcRateLimiter.set(sessionId, {
+        count: 1,
+        resetTime: now + this.RATE_LIMIT_WINDOW_MS
+      });
+      return { limited: false };
+    }
+    
+    if (rateInfo.count >= this.RATE_LIMIT_REQUESTS) {
+      return {
+        limited: true,
+        resetIn: Math.max(0, rateInfo.resetTime - now)
+      };
+    }
+    
+    // Increment counter
+    rateInfo.count++;
+    return { limited: false };
+  }
+
+  /**
+   * Get WebRTC failure info for debugging
+   */
+  private getWebRTCFailureInfo(sessionId: string): { failures: number; circuitOpen: boolean; nextRetryIn?: number } {
+    const failures = this.webrtcFailureCount.get(sessionId) || 0;
+    const circuitOpen = this.isWebRTCCircuitBreakerOpen(sessionId);
+    
+    let nextRetryIn: number | undefined;
+    if (circuitOpen) {
+      const openTime = this.webrtcCircuitBreaker.get(sessionId)!;
+      nextRetryIn = Math.max(0, this.CIRCUIT_BREAKER_TIMEOUT_MS - (Date.now() - openTime));
+    }
+    
+    return { failures, circuitOpen, nextRetryIn };
+  }
+
   /**
    * Start comprehensive session cleanup timer
    */

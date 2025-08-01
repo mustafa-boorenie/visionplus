@@ -4,6 +4,23 @@ const WebSocket = require('ws');
 
 const app = express();
 
+// Add global error handlers to prevent container crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process, just log the error
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit the process for screenshot timeouts
+  if (error.message && error.message.includes('Timeout') && error.message.includes('screenshot')) {
+    console.log('Screenshot timeout caught - continuing operation');
+    return;
+  }
+  // For other uncaught exceptions, we should still exit
+  process.exit(1);
+});
+
 // Helper function to find a working selector from an array of candidates
 async function findWorkingSelector(page, selectors) {
   // If it's a single selector, return it
@@ -40,10 +57,24 @@ let page = null;
 
 // WebRTC sessions - each session gets its own WebSocket and streaming
 const webrtcSessions = new Map();
-// Track if browser is currently executing a command
-let commandInProgress = false;
 // Queue for commands to prevent conflicts with streaming
 const commandQueue = [];
+
+// Debounce mechanism for keyboard input to reduce flickering
+let lastKeyPressTime = 0;
+let lastClickTime = 0;
+let consecutiveTimeouts = 0;
+const MAX_CONSECUTIVE_TIMEOUTS = 8; // Allow more timeouts before degrading service
+const TYPING_DEBOUNCE_MS = 40; // Reduced debounce for better responsiveness
+const CLICK_DEBOUNCE_MS = 50; // Small delay after clicks
+
+// Global frame capture state to coordinate WebRTC and WebSocket streaming
+let globalFrameCapture = {
+  isCapturing: false,
+  lastCaptureTime: 0,
+  activeStreams: new Set(),
+  captureQueue: []
+};
 
 // Initialize browser on startup
 async function initBrowser() {
@@ -87,8 +118,7 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     browserActive: browser !== null,
-    webrtcSessions: webrtcSessions.size,
-    commandInProgress
+    webrtcSessions: webrtcSessions.size
   });
 });
 
@@ -103,7 +133,6 @@ app.post('/execute', async (req, res) => {
     const commandPromise = new Promise((resolve, reject) => {
       commandQueue.push(async () => {
         try {
-          commandInProgress = true;
           const action = req.body;
           let result;
           
@@ -112,6 +141,7 @@ app.post('/execute', async (req, res) => {
               await page.goto(action.url);
               result = { url: page.url() };
               break;
+
             case 'click':
               const clickSelector = await findWorkingSelector(page, action.selector);
               await page.click(clickSelector);
@@ -181,7 +211,7 @@ app.post('/execute', async (req, res) => {
               result = { newTabCreated: true, url: newPage.url() };
               break;
             case 'screenshot':
-              const screenshot = await page.screenshot();
+              const screenshot = await page.screenshot({ timeout: 3000 }); // Reduced timeout
               result = { screenshot: screenshot.toString('base64') };
               break;
             default:
@@ -192,13 +222,12 @@ app.post('/execute', async (req, res) => {
         } catch (error) {
           reject(error);
         } finally {
-          commandInProgress = false;
-          processNextCommand();
+          processQueue();
         }
       });
       
       if (commandQueue.length === 1) {
-        processNextCommand();
+        processQueue();
       }
     });
 
@@ -214,11 +243,25 @@ app.post('/execute', async (req, res) => {
   }
 });
 
-// Process command queue
-function processNextCommand() {
-  if (commandQueue.length > 0 && !commandInProgress) {
-    const nextCommand = commandQueue.shift();
-    nextCommand();
+// Process command queue - drain all commands
+let queueBusy = false;
+async function processQueue() {
+  if (queueBusy) return;
+  queueBusy = true;
+
+  try {
+    while (commandQueue.length > 0) {
+      const cmd = commandQueue.shift();
+      try {
+        console.log(`Processing command ${commandQueue.length + 1} remaining commands`);
+        await cmd(); // Execute the command function directly
+      } catch (e) {
+        console.error('Command execution error:', e);
+        // Continue processing other commands even if one fails
+      }
+    }
+  } finally {
+    queueBusy = false;
   }
 }
 
@@ -229,12 +272,9 @@ app.post('/screenshot', async (req, res) => {
       return res.status(500).json({ error: 'Browser not initialized' });
     }
 
-    // Wait for any command to finish
-    while (commandInProgress) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    // Remove command waiting logic
 
-    const screenshot = await page.screenshot();
+    const screenshot = await page.screenshot({ timeout: 10000 });
     res.json({ 
       success: true, 
       data: screenshot.toString('base64') 
@@ -259,6 +299,21 @@ app.get('/url', async (req, res) => {
     res.json({ url });
   } catch (error) {
     console.error('URL error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get page HTML content for intelligent processing
+app.get('/html', async (req, res) => {
+  try {
+    if (!browser || !page) {
+      return res.status(500).json({ error: 'Browser not initialized' });
+    }
+
+    const html = await page.content();
+    res.json({ html, url: page.url(), timestamp: Date.now() });
+  } catch (error) {
+    console.error('HTML extraction error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -328,16 +383,19 @@ app.post('/webrtc/:id/control', async (req, res) => {
     const controlPromise = new Promise((resolve, reject) => {
       commandQueue.push(async () => {
         try {
-          commandInProgress = true;
-          
           switch (type) {
             case 'mouse_move':
               await page.mouse.move(x, y);
               break;
             case 'mouse_click':
-              await page.mouse.click(x, y);
+              if (x !== undefined && y !== undefined) {
+                await page.mouse.click(x, y);
+                lastClickTime = Date.now(); // Track click time for debouncing
+                console.log(`Mouse clicked at (${x}, ${y})`);
+              }
               break;
             case 'key':
+              lastKeyPressTime = Date.now(); // Track typing for debounce
               await page.keyboard.press(key);
               break;
             default:
@@ -348,13 +406,12 @@ app.post('/webrtc/:id/control', async (req, res) => {
         } catch (error) {
           reject(error);
         } finally {
-          commandInProgress = false;
-          processNextCommand();
+          processQueue();
         }
       });
       
       if (commandQueue.length === 1) {
-        processNextCommand();
+        processQueue();
       }
     });
 
@@ -369,50 +426,12 @@ app.post('/webrtc/:id/control', async (req, res) => {
   }
 });
 
-// Simple screenshot streaming endpoint for fallback
+// Simple screenshot streaming endpoint for fallback (DISABLED - using WebRTC)
 app.get('/stream/screenshot/:sessionId', async (req, res) => {
-  try {
-    if (!browser || !page) {
-      return res.status(500).json({ error: 'Browser not initialized' });
-    }
-
-    // Set headers for SSE
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
-    });
-
-    // Send screenshots at regular intervals
-    const interval = setInterval(async () => {
-      try {
-        // Skip if command in progress
-        if (commandInProgress) {
-          return;
-        }
-        
-        const screenshot = await page.screenshot({ 
-          type: 'png',
-          fullPage: false 
-        });
-        const base64 = screenshot.toString('base64');
-        res.write(`data: ${JSON.stringify({ screenshot: base64 })}\n\n`);
-      } catch (error) {
-        console.error('Screenshot error:', error);
-      }
-    }, 200); // 5 FPS for SSE fallback
-
-    // Cleanup on client disconnect
-    req.on('close', () => {
-      clearInterval(interval);
-      res.end();
-    });
-
-  } catch (error) {
-    console.error('Stream error:', error);
-    res.status(500).json({ error: error.message });
-  }
+  res.status(410).json({ 
+    error: 'SSE screenshot streaming disabled', 
+    message: 'Use WebRTC streaming instead' 
+  });
 });
 
 // WebSocket server for real-time streaming
@@ -451,7 +470,15 @@ function handleWebSocketConnection(ws, sessionId) {
             clearInterval(streamInterval);
             streamInterval = null;
             isStreaming = false;
-            webrtcSessions.get(sessionId).isStreaming = false;
+            const session = webrtcSessions.get(sessionId);
+            if (session) {
+              session.isStreaming = false;
+              if (session.streamInterval) {
+                clearInterval(session.streamInterval);
+                session.streamInterval = null;
+              }
+            }
+            globalFrameCapture.activeStreams.delete(`ws-${sessionId}`);
           }
           break;
           
@@ -469,7 +496,18 @@ function handleWebSocketConnection(ws, sessionId) {
     console.log(`WebSocket disconnected for session: ${sessionId}`);
     if (streamInterval) {
       clearInterval(streamInterval);
+      streamInterval = null;
     }
+    
+    // Clean up session-specific intervals
+    const session = webrtcSessions.get(sessionId);
+    if (session && session.streamInterval) {
+      clearInterval(session.streamInterval);
+      session.streamInterval = null;
+    }
+    
+    // Clean up global frame capture state
+    globalFrameCapture.activeStreams.delete(`ws-${sessionId}`);
     webrtcSessions.delete(sessionId);
   });
   
@@ -477,62 +515,142 @@ function handleWebSocketConnection(ws, sessionId) {
   ws.send(JSON.stringify({ type: 'ready', sessionId }));
 }
 
-// Start screenshot streaming with stability improvements
+// WebSocket screenshot streaming RE-ENABLED with anti-flicker optimizations
 function startScreenshotStream(ws, sessionId) {
-  let frameNumber = 0;
-  const session = webrtcSessions.get(sessionId);
+  console.log(`Starting optimized WebSocket screenshot streaming for ${sessionId}`);
   
-  const streamInterval = setInterval(async () => {
-    if (!browser || !page || ws.readyState !== WebSocket.OPEN) {
-      clearInterval(streamInterval);
+  let streamInterval = null;
+  let isCapturing = false;
+  let lastFrameTime = 0;
+  let frameSkipped = false;
+  
+  // Frame capture settings optimized for reduced flickering
+  const FRAME_RATE = 12; // Reduced to 12 FPS for better stability
+  const FRAME_INTERVAL = 1000 / FRAME_RATE; // ~67ms between frames
+  const TYPING_DEBOUNCE = 150; // Wait 150ms after typing before capturing
+  const MAX_FRAME_SIZE = 100 * 1024; // 100KB max frame size
+  
+  // Track global frame capture state
+  globalFrameCapture.activeStreams.add(`ws-${sessionId}`);
+  
+  async function captureAndSendFrame() {
+    if (!browser || !page || isCapturing) {
       return;
     }
     
-    // Skip frame if command is in progress to avoid conflicts
-    if (commandInProgress) {
+    const now = Date.now();
+    
+    // Skip frame if too soon (rate limiting)
+    if (now - lastFrameTime < FRAME_INTERVAL) {
+      frameSkipped = true;
       return;
     }
+    
+         // Check if there are pending commands (like typing) - debounce
+     if (commandQueue.length > 0) {
+       console.log('Skipping frame capture - commands pending');
+       return;
+     }
+     
+     // Skip frame capture if user is actively typing (debounce)
+     if (now - lastKeyPressTime < TYPING_DEBOUNCE_MS) {
+       console.log('Skipping frame capture - user typing');
+       return;
+     }
+    
+    isCapturing = true;
     
     try {
+      // Use viewport-only capture for better performance
       const screenshot = await page.screenshot({ 
-        type: 'jpeg',
-        quality: 80,
-        fullPage: false 
+        type: 'jpeg', 
+        quality: 75, // Slightly better quality 
+        clip: await page.viewportSize(), // Only capture viewport, not full page
+        timeout: 2000 // Shorter timeout since we're only capturing viewport
       });
       
-      const frameData = {
-        type: 'frame',
-        frame: screenshot.toString('base64'),
-        frameNumber: frameNumber++,
-        timestamp: Date.now(),
-        sessionId
-      };
+      const base64Frame = screenshot.toString('base64');
       
-      // Send frame
-      ws.send(JSON.stringify(frameData));
-      
-      // Update session info
-      if (session) {
-        session.frameCount++;
-        session.lastFrame = Date.now();
+      // Check frame size and skip if too large
+      if (base64Frame.length > MAX_FRAME_SIZE) {
+        console.warn(`Frame too large (${base64Frame.length} bytes), skipping`);
+        return;
       }
-    } catch (error) {
-      console.error('Screenshot streaming error:', error);
-      // Try to reconnect on error
-      if (ws.readyState === WebSocket.OPEN) {
+      
+      // Only send if WebSocket is still open
+      if (ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({
-          type: 'error',
-          error: 'Streaming temporarily interrupted',
-          recoverable: true
+          type: 'frame',
+          frame: base64Frame,
+          timestamp: now,
+          sessionId: sessionId
         }));
+        
+        lastFrameTime = now;
+        frameSkipped = false;
+        consecutiveTimeouts = 0; // Reset on success
+        
+        // Update session frame count
+        const session = webrtcSessions.get(sessionId);
+        if (session) {
+          session.frameCount = (session.frameCount || 0) + 1;
+          session.lastFrame = now;
+        }
       }
+      
+    } catch (error) {
+      if (error.name === 'TimeoutError') {
+        consecutiveTimeouts++;
+        console.warn(`Frame capture timeout for ${sessionId}, continuing...`);
+        
+        // If too many consecutive timeouts, reduce frame rate
+        if (consecutiveTimeouts > MAX_CONSECUTIVE_TIMEOUTS) {
+          console.warn(`Too many timeouts, reducing frame rate for ${sessionId}`);
+          // Double the interval for this session temporarily
+          setTimeout(() => {
+            consecutiveTimeouts = Math.max(0, consecutiveTimeouts - 1);
+          }, 2000);
+        }
+        
+        // Only send timeout error every 5th timeout to reduce spam
+        if (consecutiveTimeouts % 5 === 0 && ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            error: `Frame capture timeouts (${consecutiveTimeouts})`,
+            recoverable: true,
+            sessionId: sessionId
+          }));
+        }
+      } else {
+        console.error(`Frame capture error for ${sessionId}:`, error.message);
+        // Don't send non-recoverable errors immediately to avoid spam
+      }
+    } finally {
+      isCapturing = false;
     }
-  }, 100); // 10 FPS
+  }
+  
+  // Start the streaming interval
+  streamInterval = setInterval(captureAndSendFrame, FRAME_INTERVAL);
   
   // Store interval for cleanup
+  const session = webrtcSessions.get(sessionId);
   if (session) {
     session.streamInterval = streamInterval;
   }
+  
+  // Send initial frame immediately (non-blocking)
+  setTimeout(captureAndSendFrame, 100);
+  
+  // Send ready message
+  ws.send(JSON.stringify({ 
+    type: 'ready', 
+    sessionId,
+    frameRate: FRAME_RATE,
+    message: 'WebSocket streaming active with anti-flicker optimization'
+  }));
+  
+  console.log(`WebSocket streaming started for ${sessionId} at ${FRAME_RATE} FPS`);
 }
 
 // Handle remote control with queue management
@@ -542,19 +660,24 @@ async function handleRemoteControl(control) {
   return new Promise((resolve, reject) => {
     commandQueue.push(async () => {
       try {
-        commandInProgress = true;
         
         switch (control.type) {
           case 'mouse_move':
             await page.mouse.move(control.x, control.y);
             break;
           case 'mouse_click':
-            await page.mouse.click(control.x, control.y);
+            if (control.x !== undefined && control.y !== undefined) {
+              await page.mouse.click(control.x, control.y);
+              lastClickTime = Date.now(); // Track click time for debouncing
+              console.log(`Mouse clicked at (${control.x}, ${control.y})`);
+            }
             break;
           case 'key':
+            lastKeyPressTime = Date.now(); // Track typing for debounce
             await page.keyboard.press(control.key);
             break;
           case 'type':
+            lastKeyPressTime = Date.now(); // Track typing for debounce
             await page.keyboard.type(control.text);
             break;
         }
@@ -564,13 +687,12 @@ async function handleRemoteControl(control) {
         console.error('Remote control error:', error);
         reject(error);
       } finally {
-        commandInProgress = false;
-        processNextCommand();
+        processQueue();
       }
     });
     
     if (commandQueue.length === 1) {
-      processNextCommand();
+      processQueue();
     }
   });
 }
