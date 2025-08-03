@@ -12,6 +12,7 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const currentSessionRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -30,12 +31,33 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
   const initializationRef = useRef(false);
   
   useEffect(() => {
+    // Clean up previous session if sessionId changed
+    if (currentSessionRef.current && currentSessionRef.current !== sessionId) {
+      console.log(`Session changed from ${currentSessionRef.current} to ${sessionId}, cleaning up...`);
+      // Force cleanup of previous session
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'stop_stream' }));
+        wsRef.current.close();
+      }
+      if (pcRef.current && pcRef.current.signalingState !== 'closed') {
+        pcRef.current.close();
+      }
+      // Reset state for new session
+      setIsStreaming(false);
+      setRemoteControlEnabled(false);
+      setConnectionState('booting');
+      initializationRef.current = false;
+    }
+    
+    // Update current session reference
+    currentSessionRef.current = sessionId;
+    
     // Reset initialization flag on new session or retry
     if (retryTrigger > 0) {
       initializationRef.current = false;
     }
     
-    // Prevent multiple initializations
+    // Prevent multiple initializations for the same session
     if (initializationRef.current) return;
     
     let mounted = true;
@@ -96,7 +118,8 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              sessionId: sessionId
+              sessionId: sessionId,
+              streamId: `stream_${sessionId}_${Date.now()}` // Unique stream identifier
             }),
           }
         );
@@ -380,9 +403,9 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
     if (!remoteControlEnabled || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
     try {
-      const control: { type: string; x?: number; y?: number; key?: string; text?: string } = { type: '' };
+      const control: { type: string; x?: number; y?: number; key?: string; text?: string; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean } = { type: '' };
       
-      // Only handle mouse clicks - keyboard input is now handled by IntelligentInputProcessor
+      // Handle mouse clicks
       if (event.type === 'click' && canvasRef.current) {
         const rect = canvasRef.current.getBoundingClientRect();
         const x = ((event as React.MouseEvent).clientX - rect.left) / rect.width;
@@ -399,7 +422,29 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           control 
         }));
       }
-      // Keyboard input is disabled - use IntelligentInputProcessor instead
+      
+      // Handle keyboard events
+      if (event.type === 'keydown') {
+        const keyEvent = event as React.KeyboardEvent;
+        
+        // Prevent browser shortcuts from interfering
+        event.preventDefault();
+        event.stopPropagation();
+        
+        control.type = 'key_press';
+        control.key = keyEvent.key;
+        control.ctrlKey = keyEvent.ctrlKey;
+        control.altKey = keyEvent.altKey;
+        control.shiftKey = keyEvent.shiftKey;
+        
+        console.log(`Key pressed: ${keyEvent.key} (Ctrl: ${keyEvent.ctrlKey}, Alt: ${keyEvent.altKey}, Shift: ${keyEvent.shiftKey})`);
+        
+        // Send control command via WebSocket
+        wsRef.current.send(JSON.stringify({ 
+          type: 'control', 
+          control 
+        }));
+      }
     } catch (err) {
       console.error('Remote control error:', err);
     }
@@ -454,7 +499,7 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
   return (
     <div className="space-y-4">
       <div className="flex justify-between items-center">
-        <h3 className="text-lg font-semibold">Live Browser View</h3>
+        <h3 className="text-lg font-semibold">Live View</h3>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${
@@ -512,34 +557,36 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           </div>
         )}
         
-        {/* Canvas for WebSocket streaming - Click only, no keyboard input */}
+        {/* Canvas for WebSocket streaming with full remote control */}
         <canvas
           ref={canvasRef}
           width={browserDimensions.width}
           height={browserDimensions.height}
-          className="w-full h-auto cursor-pointer"
+          className="w-full h-auto cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
           style={{ maxHeight: '600px' }}
           onClick={handleRemoteControl}
-          tabIndex={-1}
+          onKeyDown={handleRemoteControl}
+          tabIndex={0}
         />
         
-        {/* Video element for native WebRTC (hidden by default) - Click only, no keyboard input */}
+        {/* Video element for native WebRTC with full remote control */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="w-full h-auto"
+          className="w-full h-auto focus:outline-none focus:ring-2 focus:ring-blue-500"
           style={{ maxHeight: '600px', display: 'none' }}
           onClick={handleRemoteControl}
-          tabIndex={-1}
+          onKeyDown={handleRemoteControl}
+          tabIndex={0}
         />
       </div>
 
       {isStreaming && (
         <p className="text-sm text-gray-600">
           {remoteControlEnabled 
-            ? `Click on the screen to interact. ${useScreenshotFallback ? 'Screenshot fallback active' : 'Live streaming active'} - no flickering when typing.`
+            ? `Click on the screen to interact or click and type directly. ${useScreenshotFallback ? 'Screenshot fallback active' : 'Live streaming active'} - remote keyboard and mouse control enabled.`
             : 'Enable remote control to interact with the browser'}
         </p>
       )}

@@ -23,14 +23,21 @@ model Session {
   currentUrl      String?
   isActive        Boolean     @default(true)
   
+  // Docker container tracking for parallel sessions
+  dockerContainerId String?
+  dockerPort        String?
+  dockerApiUrl      String?
+  
   // Relations
   commands        Command[]
   screenshots     Screenshot[]
+  consoleLogs     ConsoleLog[]
   sequence        Sequence?   @relation(fields: [sequenceId], references: [id])
   sequenceId      String?
   
   @@index([status])
   @@index([createdAt])
+  @@index([dockerContainerId])
 }
 
 model Command {
@@ -56,6 +63,9 @@ model Command {
   
   // Screenshots taken during this command
   screenshots     Screenshot[]
+  
+  // Console logs from this command
+  consoleLogs     ConsoleLog[]
   
   @@index([sessionId])
   @@index([startedAt])
@@ -161,5 +171,27 @@ model Feedback {
   suggestedSelector String?
   
   @@index([actionType])
+  @@index([createdAt])
+}
+
+model ConsoleLog {
+  id              String      @id @default(cuid())
+  sessionId       String
+  session         Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  commandId       String?
+  command         Command?    @relation(fields: [commandId], references: [id], onDelete: Cascade)
+  
+  // Log details
+  level           String      // 'info', 'warn', 'error', 'debug', 'success'
+  message         String
+  data            Json?       // Additional structured data if needed
+  source          String?     // 'system', 'automation', 'browser', 'user'
+  
+  // Timestamps
+  createdAt       DateTime    @default(now())
+  
+  @@index([sessionId])
+  @@index([commandId])
+  @@index([level])
   @@index([createdAt])
 }

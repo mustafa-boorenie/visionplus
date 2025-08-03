@@ -2,6 +2,16 @@ import axios from 'axios';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3002';
 
+export interface ConsoleLog {
+  id: string;
+  level: 'info' | 'warn' | 'error' | 'debug' | 'success';
+  message: string;
+  data?: any;
+  source?: 'system' | 'automation' | 'browser' | 'user';
+  createdAt: Date;
+  commandId?: string;
+}
+
 export interface Session {
   id: string;
   createdAt: Date;
@@ -31,6 +41,7 @@ export interface Session {
     capturedAt: Date;
     pageUrl?: string;
   }>;
+  consoleLogs?: ConsoleLog[];
 }
 
 export interface CommandResult {
@@ -221,6 +232,26 @@ class ApiClient {
       options || {}
     );
     return response.data;
+  }
+
+  // Console logs
+  async getConsoleLogs(sessionId: string, limit?: number, commandId?: string): Promise<{
+    sessionId: string;
+    logs: ConsoleLog[];
+  }> {
+    const params = new URLSearchParams();
+    if (limit) params.append('limit', limit.toString());
+    if (commandId) params.append('commandId', commandId);
+    
+    const response = await this.axiosInstance.get(
+      `/api/sessions/${sessionId}/console?${params.toString()}`
+    );
+    return response.data;
+  }
+
+  // Get console logs stream SSE endpoint URL
+  getConsoleStreamUrl(sessionId: string): string {
+    return `${API_BASE_URL}/api/sessions/${sessionId}/console/stream`;
   }
 
   // Screenshot URL helper

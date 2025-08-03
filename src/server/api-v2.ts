@@ -16,6 +16,7 @@ import { DockerBrowserService, DockerBrowserSession } from '../services/docker-b
 import { RecoveryOption, RecoveryPromptResult, RecoveryPromptSystem } from '../automation/RecoveryPromptSystem';
 import { browserlessService } from '../services/browserless.service';
 import { DockerBrowserAutomation } from '../browser/DockerBrowserAutomation';
+import { ConsoleService } from '../services/console.service';
 import OpenAI from 'openai';
 
 /**
@@ -85,6 +86,7 @@ export class EnhancedAPIServer {
   private databaseService: DatabaseService;
   private dockerBrowserService: DockerBrowserService;
   private recoverySystem: RecoveryPromptSystem;
+  private consoleService: ConsoleService;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
   
@@ -112,6 +114,7 @@ export class EnhancedAPIServer {
     this.databaseService = DatabaseService.getInstance();
     this.dockerBrowserService = new DockerBrowserService();
     this.recoverySystem = new RecoveryPromptSystem();
+    this.consoleService = ConsoleService.getInstance();
     
     // Start consolidated cleanup timer
     this.startIdleCleanup();
@@ -267,6 +270,10 @@ export class EnhancedAPIServer {
     // Command execution
     this.server.post('/api/sessions/:id/commands', this.executeCommand.bind(this));
     this.server.get('/api/sessions/:id/commands', this.getCommandHistory.bind(this));
+    
+    // Console logs
+    this.server.get('/api/sessions/:id/console', this.getConsoleLogs.bind(this));
+    this.server.get('/api/sessions/:id/console/stream', this.streamConsoleLogs.bind(this));
     
     // Server-Sent Events for live streaming
     this.server.get('/api/sessions/:id/stream', async (request, reply) => {
@@ -866,6 +873,9 @@ Generate the automation script now:`;
       // Update session activity
       this.updateSessionActivity(sessionId);
       
+      // Log command start
+      await this.consoleService.info(sessionId, `Executing command: ${command}`, { command, args }, undefined, 'user');
+      
       // Create command in database
       const dbCommand = await this.databaseService.createCommand(sessionId, {
         command,
@@ -975,6 +985,17 @@ Generate the automation script now:`;
           }]
         };
         
+        // Log command result
+        if (result.success) {
+          await this.consoleService.success(sessionId, `Command completed successfully in ${executionTime}ms`, 
+            { command, executionTime, currentUrl: await this.dockerBrowserService.getCurrentUrl(session.dockerSession) }, 
+            dbCommand.id, 'automation');
+        } else {
+          await this.consoleService.error(sessionId, `Command failed: ${result.error}`, 
+            { command, error: result.error, executionTime }, 
+            dbCommand.id, 'automation');
+        }
+        
         // Update database with command result
         await this.databaseService.updateCommand(dbCommand.id, {
           success: result.success,
@@ -1016,6 +1037,11 @@ Generate the automation script now:`;
       
     } catch (error) {
       log.error(`Failed to execute command: ${(error as Error).message}`);
+      
+      // Log command failure
+      await this.consoleService.error(request.params.id, `Command execution failed: ${(error as Error).message}`, 
+        { command: request.body.command, error: (error as Error).message }, 
+        undefined, 'system');
       
       // Update session status back to idle
       const sessionFromMap = this.sessions.get(request.params.id);
@@ -1065,6 +1091,9 @@ Generate the automation script now:`;
       }
     }
     
+    // Get recent console logs for the session
+    const consoleLogs = await this.consoleService.getSessionLogs(sessionId, 50);
+    
     return reply.send({
       id: dbSession.id,
       createdAt: dbSession.createdAt,
@@ -1076,6 +1105,7 @@ Generate the automation script now:`;
       connectedClients: memorySession?.sseClients.size || 0,
       commands: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands : [],
       screenshots: Array.isArray((dbSession as any).screenshots) ? (dbSession as any).screenshots : [],
+      consoleLogs: consoleLogs.reverse(), // Return in chronological order
       // Include dockerSession info that WebRTC viewer expects
       dockerSession: memorySession?.dockerSession ? {
         containerId: memorySession.dockerSession.containerId,
@@ -1514,6 +1544,98 @@ Generate the automation script now:`;
     return reply.send({
       sessionId: session.id,
       history: session.history
+    });
+  }
+  
+  /**
+   * Get console logs for a session
+   */
+  private async getConsoleLogs(
+    request: FastifyRequest<{ Params: { id: string }; Querystring: { limit?: string; commandId?: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    try {
+      const sessionId = request.params.id;
+      const limit = request.query.limit ? parseInt(request.query.limit, 10) : 100;
+      const commandId = request.query.commandId;
+      
+      // Update session activity
+      this.updateSessionActivity(sessionId);
+      
+      const logs = await this.consoleService.getSessionLogs(sessionId, limit, commandId);
+      
+      return reply.send({
+        sessionId,
+        logs: logs.reverse() // Return in chronological order
+      });
+    } catch (error) {
+      log.error('Failed to get console logs', error as Error);
+      return reply.status(500).send({ error: 'Failed to get console logs' });
+    }
+  }
+  
+  /**
+   * Stream console logs for a session via SSE
+   */
+  private async streamConsoleLogs(
+    request: FastifyRequest<{ Params: { id: string } }>,
+    reply: FastifyReply
+  ): Promise<any> {
+    const sessionId = request.params.id;
+    
+    // Check if session exists
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return reply.status(404).send({ error: 'Session not found' });
+    }
+    
+    // Set SSE headers
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+    
+    // Create SSE client
+    const client = {
+      send: (data: any) => {
+        try {
+          reply.raw.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch (error) {
+          log.error(`[CONSOLE_SSE] Failed to send data to ${sessionId}:`, error as Error);
+        }
+      }
+    };
+    
+    // Add client to console service
+    this.consoleService.addSessionClient(sessionId, client);
+    
+    // Send initial message
+    client.send({
+      type: 'connected',
+      sessionId,
+      timestamp: new Date()
+    });
+    
+    // Handle client disconnect
+    request.raw.on('close', () => {
+      this.consoleService.removeSessionClient(sessionId, client);
+      log.info(`[CONSOLE_SSE] Client disconnected from session ${sessionId}`);
+    });
+    
+    // Keep connection alive
+    const keepAlive = setInterval(() => {
+      try {
+        reply.raw.write(': keepalive\n\n');
+      } catch (error) {
+        clearInterval(keepAlive);
+      }
+    }, 30000);
+    
+    request.raw.on('close', () => {
+      clearInterval(keepAlive);
     });
   }
   

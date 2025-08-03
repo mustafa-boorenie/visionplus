@@ -6,8 +6,8 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AI Playwright Scripter",
-  description: "Web automation with AI-powered browser control",
+  title: "Metrobot AI",
+  description: "Automate anything with AI.",
 };
 
 export default function RootLayout({

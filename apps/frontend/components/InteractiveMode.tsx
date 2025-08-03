@@ -3,9 +3,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiClient, Session } from '@/lib/api-client';
-import { Terminal, Play, Square, Camera, Download, Maximize2, Save, Plus, Layers, Minimize2, ChevronLeft, ChevronRight, FileCode, Sparkles } from 'lucide-react';
+import { Terminal, Play, Square, Camera, Download, Maximize2, Save, Plus, Layers, Minimize2, ChevronLeft, ChevronRight, FileCode, Sparkles, FolderOpen, List, MonitorPlay } from 'lucide-react';
 import { WebRTCViewer } from './WebRTCViewer';
+import { WebRTCSessionManager } from './WebRTCSessionManager';
 import { IntelligentInputProcessor } from './IntelligentInputProcessor';
+import { SessionConsole } from './SessionConsole';
 
 interface InteractiveModeProps {
   sessionId: string | null;
@@ -40,22 +42,38 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
   const [showAIProcessor, setShowAIProcessor] = useState(false);
   const [screenshotTransitioning, setScreenshotTransitioning] = useState(false);
   const [isIntelligentProcessing, setIsIntelligentProcessing] = useState(false);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(sessionId);
+  const [consoleExpanded, setConsoleExpanded] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const screenshotTimelineRef = useRef<HTMLDivElement>(null);
 
+  // Query sessions list
+  const { data: sessionsData, refetch: refetchSessions } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: () => apiClient.listSessions(),
+    refetchInterval: 5000,
+  });
+
+  // Query sequences list
+  const { data: sequencesData, refetch: refetchSequences } = useQuery({
+    queryKey: ['sequences'],
+    queryFn: () => apiClient.listSequences(),
+    refetchInterval: 30000, // Less frequent for sequences
+  });
+
   // Query command history
   const { data: historyData } = useQuery({
-    queryKey: ['commandHistory', sessionId],
-    queryFn: () => sessionId ? apiClient.getCommandHistory(sessionId) : null,
-    enabled: !!sessionId,
+    queryKey: ['commandHistory', selectedSessionId],
+    queryFn: () => selectedSessionId ? apiClient.getCommandHistory(selectedSessionId) : null,
+    enabled: !!selectedSessionId,
   });
   
   // Query session details with commands and screenshots
   const { data: sessionDetails } = useQuery({
-    queryKey: ['session', sessionId],
-    queryFn: () => sessionId ? apiClient.getSession(sessionId) : null,
-    enabled: !!sessionId,
+    queryKey: ['session', selectedSessionId],
+    queryFn: () => selectedSessionId ? apiClient.getSession(selectedSessionId) : null,
+    enabled: !!selectedSessionId,
     refetchInterval: 5000, // Refresh every 5 seconds
   });
   
@@ -104,6 +122,39 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
         setLatestScreenshot(screenshots[index]);
         setScreenshotTransitioning(false);
       }, 150);
+    }
+  };
+
+  // Sidebar handlers
+  const handleNewSession = () => {
+    onCreateSession();
+    refetchSessions();
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    setSelectedSessionId(sessionId);
+    // Clear current state when switching sessions
+    setLogs([]);
+    setScreenshots([]);
+    setCommandActions([]);
+  };
+
+  const handleExecuteSequence = async (sequenceName: string) => {
+    if (selectedSessionId) {
+      try {
+        await apiClient.executeSequence(selectedSessionId, sequenceName);
+        refetchSessions();
+      } catch (error) {
+        console.error('Error executing sequence:', error);
+      }
+    } else {
+      // Create new session and execute sequence
+      try {
+        await apiClient.executeSequenceWithNewSession(sequenceName);
+        refetchSessions();
+      } catch (error) {
+        console.error('Error executing sequence with new session:', error);
+      }
     }
   };
 
@@ -482,77 +533,151 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
   const currentScreenshot = screenshots[currentScreenshotIndex];
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      {/* Header */}
-      <div className="bg-gray-800 p-4 flex items-center justify-between flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <Terminal className="w-5 h-5 text-green-400" />
-          <h2 className="text-lg font-bold text-white">Interactive Mode</h2>
-          {session && (
-            <span className={`px-2 py-1 text-xs rounded ${
-              session.status === 'running' ? 'bg-green-600' : 
-              session.status === 'error' ? 'bg-red-600' : 'bg-gray-600'
-            } text-white`}>
-              {session.status}
-            </span>
-          )}
+    <div className="h-screen flex bg-gray-900">
+      {/* Left Sidebar */}
+      <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
+        {/* Sidebar Header */}
+        <div className="p-4 border-b border-gray-700">
+          <div className="flex items-center gap-3">
+            <Terminal className="w-6 h-6 text-green-400" />
+            <h1 className="text-xl font-bold text-white">AI Playwright</h1>
+          </div>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {sessionId && (
-            <button
-              onClick={() => setShowSequenceBuilder(!showSequenceBuilder)}
-              className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
-              title="Create sequence from command history"
-            >
-              <FileCode className="w-4 h-4" />
-              <span className="text-sm">Build Sequence</span>
-            </button>
-          )}
-          {sessionId && (
-            <button
-              onClick={() => setShowAIProcessor(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
-              title="AI-Generate Script"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span className="text-sm">AI Script</span>
-            </button>
-          )}
-          
-          {!sessionId && (
-            <button
-              onClick={() => onCreateSession()}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-            >
-              <Play className="w-4 h-4" />
-              Start Session
-            </button>
-          )}
+
+        {/* New Session Button */}
+        <div className="p-4 border-b border-gray-700">
+          <button
+            onClick={handleNewSession}
+            className="w-full flex items-center gap-3 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            New Session
+          </button>
+        </div>
+
+        {/* Sequences Section */}
+        <div className="border-b border-gray-700">
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Sequences</h3>
+              <button
+                onClick={() => setShowSequenceBuilder(true)}
+                className="p-1 text-gray-400 hover:text-white transition-colors"
+                title="New Sequence"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {sequencesData?.sequences.map((sequence) => (
+                <button
+                  key={sequence.metadata.id}
+                  onClick={() => handleExecuteSequence(sequence.metadata.name)}
+                  className="w-full flex items-center gap-3 px-3 py-2 text-left text-gray-300 hover:bg-gray-700 rounded-md transition-colors"
+                >
+                  <FileCode className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">{sequence.metadata.name}</div>
+                    {sequence.metadata.description && (
+                      <div className="text-xs text-gray-500 truncate">{sequence.metadata.description}</div>
+                    )}
+                  </div>
+                </button>
+              ))}
+              {(!sequencesData?.sequences || sequencesData.sequences.length === 0) && (
+                <div className="text-sm text-gray-500 italic py-2">No sequences available</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Sessions Section */}
+        <div className="flex-1 overflow-hidden">
+          <div className="p-4">
+            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Active Sessions</h3>
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {sessionsData?.sessions.map((sessionItem) => (
+                <button
+                  key={sessionItem.id}
+                  onClick={() => handleSelectSession(sessionItem.id)}
+                  className={`w-full flex items-center gap-3 px-3 py-2 text-left rounded-md transition-colors ${
+                    selectedSessionId === sessionItem.id 
+                      ? 'bg-blue-600 text-white' 
+                      : 'text-gray-300 hover:bg-gray-700'
+                  }`}
+                >
+                  <MonitorPlay className="w-4 h-4 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium truncate">Session {sessionItem.id.slice(-8)}</div>
+                    <div className="text-xs opacity-75 truncate">
+                      {sessionItem.currentUrl || 'No URL'}
+                    </div>
+                  </div>
+                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                    sessionItem.status === 'running' ? 'bg-green-400' : 
+                    sessionItem.status === 'error' ? 'bg-red-400' : 'bg-gray-400'
+                  }`} />
+                </button>
+              ))}
+              {(!sessionsData?.sessions || sessionsData.sessions.length === 0) && (
+                <div className="text-sm text-gray-500 italic py-2">No active sessions</div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {selectedSessionId ? (
+          <div>
+            {/* Header for selected session */}
+            <div className="bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <Terminal className="w-5 h-5 text-green-400" />
+                <h2 className="text-lg font-bold text-white">Session {selectedSessionId.slice(-8)}</h2>
+                {sessionDetails && (
+                  <span className={`px-2 py-1 text-xs rounded ${
+                    sessionDetails.status === 'running' ? 'bg-green-600' : 
+                    sessionDetails.status === 'error' ? 'bg-red-600' : 'bg-gray-600'
+                  } text-white`}>
+                    {sessionDetails.status}
+                  </span>
+                )}
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSequenceBuilder(!showSequenceBuilder)}
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+                  title="Create sequence from command history"
+                >
+                  <FileCode className="w-4 h-4" />
+                  <span className="text-sm">Build Sequence</span>
+                </button>
+                <button
+                  onClick={() => setShowAIProcessor(true)}
+                  className="flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition-colors"
+                  title="AI-Generate Script"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="text-sm">AI Script</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Main session content */}
+            <div className="flex-1 flex overflow-hidden">
         {/* Console */}
         <div className="flex-1 flex flex-col bg-gray-900 overflow-hidden">
-          {/* Logs */}
-          <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
-            {logs.length === 0 ? (
-              <div className="text-gray-500">
-                {sessionId ? 'Session ready. Enter a command below...' : 'Start a session to begin...'}
-              </div>
-            ) : (
-              logs.map((log, index) => (
-                <div key={index} className={`mb-2 ${
-                  log.type === 'command' ? 'text-cyan-400' :
-                  log.type === 'response' ? 'text-green-400' :
-                  log.type === 'error' ? 'text-red-400' : 'text-gray-400'
-                }`}>
-                  <span className="text-gray-600">[{formatTimestamp(log.timestamp)}]</span> {log.text}
-                </div>
-              ))
-            )}
-            <div ref={logsEndRef} />
+          {/* Session Console Component */}
+          <div className="flex-1 p-3">
+            <SessionConsole
+              sessionId={selectedSessionId}
+              expanded={consoleExpanded}
+              onToggleExpanded={() => setConsoleExpanded(!consoleExpanded)}
+              className="h-full"
+            />
           </div>
 
             {/* Command Input */}
@@ -583,35 +708,22 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
             </div>
         </div>
 
-        {/* WebRTC Viewer - Live browser streaming with remote control */}
-        {sessionId && (
-          <div className="relative bg-gray-800 flex flex-col overflow-hidden rounded-lg" style={{ width: '800px', height: '500px' }}>
-            <div className="p-3 border-b border-gray-700 flex items-center justify-between">
-              <h3 className="text-white font-semibold flex items-center gap-2">
-                <Camera className="w-4 h-4" />
-                Live Browser Stream
-              </h3>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-green-400">
-                  ● Live
-                </span>
-              </div>
-            </div>
-            
-            <div className="flex-1 p-2">
-              <WebRTCViewer 
-                sessionId={sessionId}
-                onError={(error: Error) => {
-                  setLogs(prev => [...prev, {
-                    type: 'error',
-                    text: `WebRTC Error: ${error.message}`,
-                    timestamp: new Date()
-                  }]);
-                }}
-              />
-            </div>
+        {/* WebRTC Session Manager - Live browser streaming with session isolation */}
+        <div className="relative bg-gray-800 p-3 m-3 flex flex-col overflow-hidden rounded-lg" style={{ width: '800px', height: '500px' }}>
+          <div className="flex-1 p-5">
+            <WebRTCSessionManager
+              activeSessionId={selectedSessionId}
+              availableSessions={sessionsData?.sessions?.map(s => ({ id: s.id, name: `Session ${s.id.substring(0, 8)}` })) || []}
+              onError={(error: Error) => {
+                setLogs(prev => [...prev, {
+                  type: 'error',
+                  text: `WebRTC Error: ${error.message}`,
+                  timestamp: new Date()
+                }]);
+              }}
+            />
           </div>
-        )}
+        </div>
 
         {/* Intelligent Input Processor */}
         {showAIProcessor && (
@@ -655,6 +767,16 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
                  }}
                />
              </div>
+          </div>
+        )}
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center text-gray-400">
+              <Terminal className="w-16 h-16 mx-auto mb-4 opacity-50" />
+              <p className="text-lg">No session selected</p>
+              <p className="text-sm">Select a session from the sidebar to begin</p>
+            </div>
           </div>
         )}
       </div>
@@ -790,7 +912,7 @@ export function InteractiveMode({ sessionId, session, onCreateSession }: Interac
         </div>
       )}
       
-
-    </div>
+      </div> {/* Close main content area */}
+    </div> {/* Close main container */}
   );
 } 

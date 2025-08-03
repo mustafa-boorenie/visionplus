@@ -1,4 +1,4 @@
-import { PrismaClient, Session, Command, Screenshot, Sequence } from '@prisma/client';
+import { PrismaClient, Session, Command, Screenshot, Sequence, ConsoleLog } from '@prisma/client';
 import { log } from '../utils/logger';
 import { AutomationScript, AutomationExecutionResult, BrowserAction } from '../types';
 import path from 'path';
@@ -405,6 +405,56 @@ export class DatabaseService {
         suggestedSelector: data.suggestedSelector,
       },
     });
+  }
+
+  // Console Log Management
+  async createConsoleLog(data: {
+    sessionId: string;
+    commandId?: string;
+    level: string;
+    message: string;
+    data?: any;
+    source?: string;
+  }): Promise<ConsoleLog> {
+    return await this.prisma.consoleLog.create({
+      data: {
+        sessionId: data.sessionId,
+        commandId: data.commandId,
+        level: data.level,
+        message: data.message,
+        data: data.data,
+        source: data.source,
+      },
+    });
+  }
+
+  async getConsoleLogsBySession(
+    sessionId: string,
+    limit: number = 100,
+    commandId?: string
+  ): Promise<ConsoleLog[]> {
+    return await this.prisma.consoleLog.findMany({
+      where: {
+        sessionId,
+        ...(commandId && { commandId }),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async getConsoleLogsByCommand(commandId: string): Promise<ConsoleLog[]> {
+    return await this.prisma.consoleLog.findMany({
+      where: { commandId },
+      orderBy: { createdAt: 'asc' },
+    });
+  }
+
+  async deleteConsoleLogsBySession(sessionId: string): Promise<number> {
+    const result = await this.prisma.consoleLog.deleteMany({
+      where: { sessionId },
+    });
+    return result.count;
   }
 
   // Helper method to clean up old sessions
