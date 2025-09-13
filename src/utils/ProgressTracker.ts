@@ -1,6 +1,8 @@
 import chalk from 'chalk';
 import { EventEmitter } from 'events';
 import fs from 'fs-extra';
+import { StreamingServer } from '../streaming/StreamingServer';
+import { WebSocketStreamingServer } from '../streaming/WebSocketServer';
 
 /**
  * Progress event data
@@ -23,6 +25,8 @@ export class ProgressTracker extends EventEmitter {
   private currentStep: number = 0;
   private totalSteps: number = 0;
   private isVerbose: boolean;
+  private streamingServer?: StreamingServer;
+  private wsServer?: WebSocketStreamingServer;
 
   constructor(verbose: boolean = false) {
     super();
@@ -39,6 +43,20 @@ export class ProgressTracker extends EventEmitter {
   }
 
   /**
+   * Enable SSE streaming
+   */
+  enableSSEStreaming(server: StreamingServer): void {
+    this.streamingServer = server;
+  }
+
+  /**
+   * Enable WebSocket streaming
+   */
+  enableWebSocketStreaming(server: WebSocketStreamingServer): void {
+    this.wsServer = server;
+  }
+
+  /**
    * Record and display progress event
    */
   track(event: Omit<ProgressEvent, 'timestamp'>): void {
@@ -50,6 +68,14 @@ export class ProgressTracker extends EventEmitter {
     this.events.push(fullEvent);
     this.emit('progress', fullEvent);
     this.displayProgress(fullEvent);
+
+    // Broadcast to streaming servers
+    if (this.streamingServer) {
+      this.streamingServer.broadcast('progress', fullEvent);
+    }
+    if (this.wsServer) {
+      this.wsServer.broadcast('progress', fullEvent);
+    }
   }
 
   /**
