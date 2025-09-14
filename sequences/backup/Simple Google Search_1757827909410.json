@@ -1,0 +1,48 @@
+{
+  "metadata": {
+    "id": "1e4ebfa1-20c6-441c-87f0-e395b0ad0647",
+    "name": "Simple Google Search",
+    "description": "Simple Google search without arguments",
+    "createdAt": "2025-09-14T05:31:49.410Z",
+    "usageCount": 0,
+    "tags": [
+      "google",
+      "search"
+    ],
+    "category": "basic",
+    "successRate": 100
+  },
+  "originalPrompt": "1. go to google.com\n2. search for test\n3. screenshot",
+  "script": {
+    "name": "Simple Google Search",
+    "description": "Basic Google search",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "type",
+        "selector": "textarea[name=\"q\"]",
+        "text": "test"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "screenshot",
+        "name": "results"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-09-14T05:31:49.410Z",
+      "success": true,
+      "executionTime": 4000,
+      "errors": []
+    }
+  ]
+}

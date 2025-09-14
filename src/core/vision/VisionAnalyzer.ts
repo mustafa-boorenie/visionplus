@@ -60,8 +60,7 @@ export class VisionAnalyzer {
             ]
           }
         ],
-        max_tokens: request.maxTokens || 1000,
-        temperature: request.temperature || 0.7
+        max_completion_tokens: request.maxTokens || 1000,
       });
 
       const content = response.choices[0]?.message?.content || 'No response from Vision API';

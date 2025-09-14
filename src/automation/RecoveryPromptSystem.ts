@@ -142,8 +142,7 @@ export class RecoveryPromptSystem {
           }
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.7,
-        max_tokens: 500
+        max_completion_tokens: 500
       });
 
       const suggestion = JSON.parse(response.choices[0].message.content || '{}');

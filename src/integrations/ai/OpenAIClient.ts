@@ -157,8 +157,7 @@ export class OpenAIClient {
           type: "function", 
           function: { name: "plan_automation_steps" } 
         },
-        temperature: openAIConfig.temperature,
-        max_tokens: openAIConfig.maxTokens
+        max_completion_tokens: openAIConfig.maxTokens
       });
 
       const toolCall = response.choices[0].message.tool_calls?.[0];
@@ -208,7 +207,6 @@ Suggest a recovery approach with specific actions.`
         messages,
         tools,
         tool_choice: "required",  // Require tool use
-        temperature: 0.5
       });
 
       const toolCall = response.choices[0].message.tool_calls?.[0];
@@ -303,8 +301,7 @@ Suggest a recovery approach with specific actions.`
       const response = await this.openai.chat.completions.create({
         model: openAIConfig.visionModel,
         messages,
-        max_tokens: openAIConfig.maxTokens,
-        temperature: openAIConfig.temperature
+        max_completion_tokens: openAIConfig.maxTokens,
       });
 
       return response.choices[0].message.content || '';

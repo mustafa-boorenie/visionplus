@@ -1,0 +1,49 @@
+{
+  "metadata": {
+    "id": "63f40249-f405-4824-8884-b2b84c8d6bd5",
+    "name": "Patient Search Sequence",
+    "description": "Automated patient search with configurable website and patient name",
+    "createdAt": "2025-09-14T05:31:48.759Z",
+    "usageCount": 0,
+    "tags": [
+      "patient",
+      "search",
+      "arguments"
+    ],
+    "category": "healthcare",
+    "successRate": 100
+  },
+  "originalPrompt": "1. go to {website}\n2. search for patient {patientName}\n3. click on patient record",
+  "script": {
+    "name": "Patient Search Sequence",
+    "description": "Search for a patient by name",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "{website}"
+      },
+      {
+        "type": "type",
+        "selector": "input[name=\"search\"]",
+        "text": "{patientName}"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      },
+      {
+        "type": "click",
+        "selector": ".patient-record"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-09-14T05:31:48.759Z",
+      "success": true,
+      "executionTime": 5000,
+      "errors": []
+    }
+  ]
+}

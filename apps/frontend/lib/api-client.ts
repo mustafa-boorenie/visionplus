@@ -198,11 +198,41 @@ class ApiClient {
     return response.data;
   }
 
-  async saveSequence(sequence: Partial<Sequence>): Promise<{ 
+  async saveSequence(data: {
+    name: string;
+    originalPrompt?: string;
+    executionResult?: {
+      success: boolean;
+      script: {
+        name: string;
+        description: string;
+        url?: string;
+        actions: Array<{
+          type: string;
+          selector?: string | string[];
+          text?: string;
+          url?: string;
+          key?: string;
+          duration?: number;
+        }>;
+      };
+      executionTime: number;
+      screenshots: string[];
+      errors: string[];
+      stepResults?: Array<{
+        step: string;
+        success: boolean;
+        duration: number;
+      }>;
+    };
+    description?: string;
+    tags?: string[];
+    category?: string;
+  }): Promise<{ 
     success: boolean; 
     sequence: Sequence;
   }> {
-    const response = await this.axiosInstance.post('/api/sequences', sequence);
+    const response = await this.axiosInstance.post('/api/sequences', data);
     return response.data;
   }
   
@@ -221,8 +251,10 @@ class ApiClient {
   
   // Execute sequence in existing session
   async executeSequence(sessionId: string, sequenceName: string): Promise<CommandResult> {
+    // URL encode the sequence name to handle spaces and special characters
+    const encodedSequenceName = encodeURIComponent(sequenceName);
     const response = await this.axiosInstance.post(
-      `/api/sessions/${sessionId}/sequences/${sequenceName}`,
+      `/api/sessions/${sessionId}/sequences/${encodedSequenceName}`,
       {}
     );
     return response.data;
@@ -236,8 +268,10 @@ class ApiClient {
       startUrl?: string;
     }
   ): Promise<CommandResult> {
+    // URL encode the sequence name to handle spaces and special characters
+    const encodedSequenceName = encodeURIComponent(sequenceName);
     const response = await this.axiosInstance.post(
-      `/api/sequences/${sequenceName}/execute`,
+      `/api/sequences/${encodedSequenceName}/execute`,
       options || {}
     );
     return response.data;

@@ -299,8 +299,7 @@ export class IntelligentAutomation {
               content: this.currentScript.description || 'Execute task'
             }
           ],
-          temperature: 0.1,
-          max_tokens: 2000
+          max_completion_tokens: 2000
         });
         
         log.info(`[OPENAI_DEBUG] API call completed successfully`);
@@ -992,7 +991,6 @@ try {
         screenshotPath,
         prompt: analysisPrompt,
         maxTokens: 1500,
-        temperature: 0.3
       });
       
       // Extract JavaScript code
@@ -1027,8 +1025,7 @@ try {
               content: codePrompt
             }
           ],
-          max_tokens: 1000,
-          temperature: 0.2
+          max_completion_tokens: 1000,
         });
         
         const newCodeBlocks = OpenAIToolsClient.extractJavaScriptCode(codeResponse.choices[0].message.content || '');
@@ -1248,7 +1245,6 @@ try {
           { "type": "click", "selector": "button[type='submit']" }
         ]`,
         maxTokens: 2000,
-        temperature: 0.3 // Lower temperature for more consistent analysis
       });
 
       // Log the raw analysis content for debugging
@@ -1473,7 +1469,6 @@ Return as JSON:
   "confidence": 0.0 to 1.0
 }`,
         maxTokens: 1500,
-        temperature: 0.2 // Very low temperature for accuracy
       });
 
       // First attempt token-based solve via Anti-Captcha if available
@@ -1566,7 +1561,6 @@ Return as JSON:
             screenshotPath: retryShot,
             prompt: `We attempted the CAPTCHA but it may still be present. Provide only JSON with refined solvingSteps and confidence. HTML excerpt:\n${htmlAfter.slice(0, 12000)}`,
             maxTokens: 1000,
-            temperature: 0.2
           });
           try {
             const refined = JSON.parse(reanalysis.content);
@@ -1851,8 +1845,7 @@ Return as JSON:
       const response = await this.openai.chat.completions.create({
         model: 'gpt-5',
         messages,
-        max_tokens: 4000,
-        temperature: 0.3,
+        max_completion_tokens: 4000,
         response_format: { type: 'json_object' }
       });
 
@@ -1929,8 +1922,7 @@ Return as JSON:
             What is this automation trying to achieve?`
           }
         ],
-        max_tokens: 100,
-        temperature: 0.3
+        max_completion_tokens: 100,
       });
 
       const summary = response.choices[0]?.message?.content || this.currentScript.description;

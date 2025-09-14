@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "id": "6d9fbf0f-b2e0-4beb-876a-1309175e5243",
+    "name": "Quick Test",
+    "description": "Quick test sequence",
+    "createdAt": "2025-09-14T05:37:07.696Z",
+    "usageCount": 0,
+    "tags": [],
+    "category": "test",
+    "successRate": 100
+  },
+  "originalPrompt": "1. go to google.com\n2. screenshot",
+  "script": {
+    "name": "Quick Test",
+    "description": "Quick test sequence",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "screenshot",
+        "name": "test"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-09-14T05:37:07.697Z",
+      "success": true,
+      "executionTime": 3000,
+      "errors": []
+    }
+  ]
+}

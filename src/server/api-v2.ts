@@ -184,6 +184,54 @@ export class EnhancedAPIServer {
   }
 
   /**
+   * Clean up orphaned database sessions that don't have Docker containers
+   */
+  private async cleanupOrphanedDatabaseSessions(): Promise<void> {
+    try {
+      log.info('Cleaning up orphaned database sessions...');
+      
+      // Get all sessions from memory that don't have Docker containers
+      const orphanedSessionIds: string[] = [];
+      
+      for (const [sessionId, session] of this.sessions) {
+        if (!session.dockerSession) {
+          orphanedSessionIds.push(sessionId);
+        }
+      }
+      
+      // Also check database for sessions that claim to have Docker containers but don't
+      const dbSessions = await this.databaseService.getActiveSessions(24 * 60 * 60 * 1000);
+      
+      for (const dbSession of dbSessions) {
+        // If session has Docker info in DB but not in memory, it's orphaned
+        if ((dbSession as any).dockerContainerId && !this.sessions.has(dbSession.id)) {
+          orphanedSessionIds.push(dbSession.id);
+        }
+      }
+      
+      // Mark orphaned sessions as inactive
+      let cleanedCount = 0;
+      for (const sessionId of orphanedSessionIds) {
+        try {
+          await this.databaseService.deactivateSession(sessionId);
+          this.sessions.delete(sessionId); // Remove from memory too
+          cleanedCount++;
+          log.info(`Cleaned up orphaned session: ${sessionId}`);
+        } catch (error) {
+          log.warn(`Failed to cleanup orphaned session ${sessionId}`);
+        }
+      }
+      
+      if (cleanedCount > 0) {
+        log.info(`Cleaned up ${cleanedCount} orphaned database sessions`);
+      }
+      
+    } catch (error) {
+      log.error('Failed to cleanup orphaned database sessions:', error as Error);
+    }
+  }
+
+  /**
    * Initialize server and routes
    */
   async initialize(): Promise<void> {
@@ -195,6 +243,9 @@ export class EnhancedAPIServer {
     
     // Restore active sessions from database
     await this.restoreActiveSessions();
+    
+    // Clean up orphaned sessions that don't have Docker containers
+    await this.cleanupOrphanedDatabaseSessions();
     
     // Register plugins
     await this.server.register(fastifyCors, {
@@ -497,8 +548,7 @@ Generate the automation script now:`;
               content: prompt
             }
           ],
-          temperature: 0.1,
-          max_tokens: 2000
+          max_completion_tokens: 2000
         });
 
         const responseContent = response.choices[0].message.content || '';
@@ -908,7 +958,7 @@ Generate the automation script now:`;
         // Take a screenshot after command execution
         let screenshotFilename = null;
         try {
-          const screenshot = await this.dockerService.takeScreenshot(session.dockerSession);
+          const screenshot = await this.dockerService.takeScreenshot(session.dockerSession, `cmd_${Date.now()}`);
           screenshotFilename = `${sessionId}_${Date.now()}.png`;
           
           // Save screenshot to filesystem
@@ -917,7 +967,7 @@ Generate the automation script now:`;
           const screenshotPath = path.join(screenshotDir, screenshotFilename);
           
           // Convert base64 to buffer and save
-          const buffer = Buffer.from(screenshot, 'base64');
+          const buffer = Buffer.isBuffer(screenshot) ? screenshot : Buffer.from(screenshot as string, 'base64');
           await fs.writeFile(screenshotPath, buffer);
           
           // Get current page URL and title
@@ -1176,22 +1226,24 @@ Generate the automation script now:`;
       includeInactive: false // Only show active sessions
     });
     
-    // Enhance with memory state
-    const sessions = dbSessions.map(dbSession => {
-      const memorySession = this.sessions.get(dbSession.id);
-      
-      return {
-        ...dbSession,
-        connectedClients: memorySession?.sseClients.size || 0,
-        status: memorySession?.status || dbSession.status,
-        currentCommand: memorySession?.currentCommand,
-        dockerAvailable: !!memorySession?.dockerSession,
-        commandCount: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands.length : 0,
-        screenshotCount: Array.isArray((dbSession as any).screenshots) ? (dbSession as any).screenshots.length : 0,
-        sequenceName: (dbSession as any).sequence?.name,
-        isActive: memorySession !== undefined
-      };
-    });
+    // Enhance with memory state and filter out sessions without Docker containers
+    const sessions = dbSessions
+      .map(dbSession => {
+        const memorySession = this.sessions.get(dbSession.id);
+        
+        return {
+          ...dbSession,
+          connectedClients: memorySession?.sseClients.size || 0,
+          status: memorySession?.status || dbSession.status,
+          currentCommand: memorySession?.currentCommand,
+          dockerAvailable: !!memorySession?.dockerSession,
+          commandCount: Array.isArray((dbSession as any).commands) ? (dbSession as any).commands.length : 0,
+          screenshotCount: Array.isArray((dbSession as any).screenshots) ? (dbSession as any).screenshots.length : 0,
+          sequenceName: (dbSession as any).sequence?.name,
+          isActive: memorySession !== undefined
+        };
+      })
+      .filter(session => session.isActive && session.dockerAvailable); // Only show sessions with active Docker containers
     
     return reply.send({ sessions, total });
   }
@@ -1812,33 +1864,53 @@ Generate the automation script now:`;
         return reply.status(404).send({ error: 'Sequence not found' });
       }
       
-      // Create new session for this sequence
+      // Create new session for this sequence with Docker container
       const dbSession = await this.databaseService.createSession({
         startUrl: startUrl || sequence.script.url,
         sequenceId: undefined // We'll link it after migrating sequences to database
       });
       
-      // Create browser instance
+      // Launch a new Docker container for this session
+      let dockerSession: DockerBrowserSession | undefined;
       
-      // Navigate to start URL if provided
-      const initialUrl = startUrl || sequence.script.url;
-      if (initialUrl) {
-        // TODO: Replace with Docker container communication
-        // await session.browser.executeAction({ type: 'navigate', url: initialUrl });
+      if (process.env.USE_DOCKER !== 'false') {
+        try {
+          log.info(`Creating Docker browser session for ${dbSession.id}...`);
+          dockerSession = await this.dockerService.createBrowserContainer(dbSession.id);
+          log.info(`Docker session created successfully for ${dbSession.id}: ${dockerSession.apiUrl}`);
+        } catch (error) {
+          log.error('Failed to create Docker session:', error as Error);
+          log.warn('Proceeding without Docker container, sequence execution may fail');
+          dockerSession = undefined;
+        }
+      } else {
+        log.info('Docker disabled via USE_DOCKER=false, creating session without container');
       }
       
-      // Create session in memory
+      // Create session in memory with Docker container
       const session: Session = {
         id: dbSession.id,
-        // browser, // TODO: Replace with Docker container communication
+        dockerSession,
         createdAt: dbSession.createdAt,
-        lastActivity: dbSession.lastActivity,
+        lastActivity: new Date(), // Use current time to prevent immediate cleanup
         status: dbSession.status as 'idle' | 'running' | 'error' | 'waiting_for_recovery',
         history: [],
-        sseClients: new Set() // Changed from wsClients
+        sseClients: new Set()
       };
       
       this.sessions.set(dbSession.id, session);
+      
+      // Update database with Docker container info
+      try {
+        await this.databaseService.updateSession(dbSession.id, {
+          lastActivity: session.lastActivity,
+          dockerContainerId: dockerSession?.containerId,
+          dockerPort: dockerSession?.port,
+          dockerApiUrl: dockerSession?.apiUrl
+        });
+      } catch (dbUpdateError) {
+        log.warn(`Failed to update session with Docker info in database: ${dbUpdateError}`);
+      }
       
       log.info(`Created session ${dbSession.id} for sequence ${sequenceName}`);
       
@@ -1848,11 +1920,30 @@ Generate the automation script now:`;
         body: { arguments: args }
       };
       
-      // Call executeSequence with the new session
-      return await this.executeSequence(
+      // Return session info immediately for frontend to start monitoring
+      // The sequence execution will happen in the background
+      const sessionInfo = {
+        sessionId: dbSession.id,
+        createdAt: session.createdAt,
+        status: session.status,
+        containerPort: dockerSession?.port,
+        dockerAvailable: !!dockerSession,
+        message: dockerSession 
+          ? `Created session ${dbSession.id} with Docker container for sequence ${sequenceName}`
+          : `Created session ${dbSession.id} without Docker for sequence ${sequenceName}`
+      };
+      
+      // Start sequence execution in background (don't await)
+      this.executeSequence(
         executeParams as any,
-        reply
-      );
+        { send: () => {}, status: () => ({ send: () => {} }) } as any // Mock reply for background execution
+      ).catch(error => {
+        log.error(`Background sequence execution failed for ${sequenceName}:`, error as Error);
+        // Update session status to error
+        session.status = 'error';
+      });
+      
+      return reply.send(sessionInfo);
     } catch (error) {
       log.error('Failed to execute sequence with new session', error as Error);
       return reply.status(500).send({ 
@@ -1899,33 +1990,51 @@ Generate the automation script now:`;
         command: `Executing sequence: ${sequenceName}`
       });
       
-      // Create automation instance for sequence execution
-      const automation = new IntelligentAutomation(
-        null as any, // We'll use Docker session instead
-        sequenceName,
-        true, // verbose
-        true, // persistent browser
-        true, // is running sequence
-        undefined, // no readline in API mode
-        (screenshot: string) => {
-          // Broadcast screenshot immediately as it's captured
-          log.info(`[SEQUENCE_SCREENSHOT_CALLBACK] Broadcasting screenshot: ${screenshot}`);
-          this.broadcastToSession(sessionId, {
-            type: 'screenshot',
-            filename: path.basename(screenshot),
-            fullPath: screenshot,
-            timestamp: new Date().toISOString()
-          });
-        }
-      );
-      
-      // Execute
+      // Execute sequence using Docker session directly
       const startTime = Date.now();
       let result: AutomationExecutionResult;
       
       try {
-        const currentUrl = await session.browser.getCurrentUrl();
-        result = await automation.execute(currentUrl);
+        // Get current URL from Docker session if available
+        let currentUrl = sequence.script.url || 'https://www.google.com';
+        if (session.dockerSession) {
+          try {
+            currentUrl = await this.getDockerUrl(session.dockerSession);
+          } catch (error) {
+            log.warn('Failed to get current URL from Docker, using sequence URL');
+          }
+        }
+        
+        // Execute sequence using parseAndExecuteCommand for each step
+        if (session.dockerSession) {
+          // Execute the sequence prompt as a single command
+          const commandResult = await this.parseAndExecuteCommand(session.dockerSession, sequence.originalPrompt || sequenceName);
+          
+          // Create a proper AutomationExecutionResult
+          result = {
+            success: commandResult.success,
+            script: sequence.script,
+            executionTime: Date.now() - startTime,
+            screenshots: [],
+            errors: commandResult.success ? [] : [commandResult.error || 'Sequence execution failed'],
+            stepResults: [{
+              step: sequence.originalPrompt || sequenceName,
+              success: commandResult.success,
+              error: commandResult.error,
+              duration: Date.now() - startTime
+            }]
+          };
+        } else {
+          // Fallback for sessions without Docker
+          result = {
+            success: false,
+            script: sequence.script,
+            executionTime: Date.now() - startTime,
+            screenshots: [],
+            errors: ['No Docker session available for sequence execution'],
+            stepResults: []
+          };
+        }
         
         // Broadcast completion
         this.broadcastToSession(sessionId, {

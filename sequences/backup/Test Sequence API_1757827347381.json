@@ -1,0 +1,43 @@
+{
+  "metadata": {
+    "id": "27305a78-3e9d-4b9e-9fe8-eae6b18e76df",
+    "name": "Test Sequence API",
+    "description": "Test sequence created via API",
+    "createdAt": "2025-09-14T05:22:27.367Z",
+    "usageCount": 0,
+    "tags": [
+      "api-test"
+    ],
+    "category": "test",
+    "successRate": 100
+  },
+  "originalPrompt": "1. go to google.com\n2. search for test",
+  "script": {
+    "name": "Test Sequence API",
+    "description": "API test sequence",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.google.com"
+      },
+      {
+        "type": "type",
+        "selector": "textarea[name=\"q\"]",
+        "text": "test"
+      },
+      {
+        "type": "press",
+        "key": "Enter"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-09-14T05:22:27.367Z",
+      "success": true,
+      "executionTime": 5000,
+      "errors": []
+    }
+  ]
+}

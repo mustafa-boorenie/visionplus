@@ -55,7 +55,6 @@ export const openAIConfig = {
   model: 'gpt-5',
   visionModel: 'gpt-5',
   maxTokens: 4096,
-  temperature: 0.3,
   
   // Rate limiting for API calls
   rateLimits: {

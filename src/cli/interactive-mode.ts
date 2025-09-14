@@ -313,8 +313,7 @@ Return ONLY a javascript code block.`;
                 ]
               }
             ],
-            max_tokens: 1000,
-            temperature: 0.3
+            max_completion_tokens: 1000,
           });
           
           const codeBlocks = OpenAIToolsClient.extractJavaScriptCode(response.choices[0].message.content || '');
@@ -502,8 +501,7 @@ Return ONLY a javascript code block.`;
             ]
           }
         ],
-        max_tokens: 1500,
-        temperature: 0.3
+        max_completion_tokens: 1500,
       });
 
       const analysis = response.choices[0].message.content || 'No analysis available';
@@ -628,8 +626,7 @@ Return ONLY a javascript code block.`;
               content: codePrompt
             }
           ],
-          max_tokens: 1000,
-          temperature: 0.2
+          max_completion_tokens: 1000,
         });
         
         const newCodeBlocks = OpenAIToolsClient.extractJavaScriptCode(codeResponse.choices[0].message.content || '');

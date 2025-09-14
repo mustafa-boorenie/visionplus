@@ -516,17 +516,30 @@ const wss = new WebSocket.Server({ noServer: true });
 
 // Handle WebSocket connection for streaming
 function handleWebSocketConnection(ws, sessionId) {
-  console.log(`WebSocket connected for session: ${sessionId}`);
+  console.log(`🔌 WebSocket connected for session: ${sessionId}`);
   
   let streamInterval = null;
   let isStreaming = false;
   
-  // Store session
+  // Clean up any existing session with the same ID
+  const existingSession = webrtcSessions.get(sessionId);
+  if (existingSession) {
+    console.log(`🗑️ Cleaning up existing session ${sessionId}`);
+    if (existingSession.streamInterval) {
+      clearInterval(existingSession.streamInterval);
+    }
+    if (existingSession.ws && existingSession.ws.readyState === WebSocket.OPEN) {
+      existingSession.ws.close();
+    }
+  }
+  
+  // Store new session
   webrtcSessions.set(sessionId, { 
     ws, 
     isStreaming: false,
     lastFrame: null,
-    frameCount: 0
+    frameCount: 0,
+    sessionId: sessionId // Add explicit session ID
   });
   
   ws.on('message', async (message) => {
@@ -570,7 +583,9 @@ function handleWebSocketConnection(ws, sessionId) {
   });
   
   ws.on('close', () => {
-    console.log(`WebSocket disconnected for session: ${sessionId}`);
+    console.log(`🔌 WebSocket disconnected for session: ${sessionId}`);
+    
+    // Clean up stream interval
     if (streamInterval) {
       clearInterval(streamInterval);
       streamInterval = null;
@@ -585,7 +600,11 @@ function handleWebSocketConnection(ws, sessionId) {
     
     // Clean up global frame capture state
     globalFrameCapture.activeStreams.delete(`ws-${sessionId}`);
+    
+    // Remove session completely
     webrtcSessions.delete(sessionId);
+    
+    console.log(`✅ Session ${sessionId} completely cleaned up`);
   });
   
   // Send initial ready message
@@ -607,13 +626,20 @@ function startScreenshotStream(ws, sessionId) {
   const TYPING_DEBOUNCE = 150; // Wait 150ms after typing before capturing
   const MAX_FRAME_SIZE = 250 * 1024; // 250KB max frame size (increased)
   const TARGET_FRAME_SIZE = 150 * 1024; // 150KB target size
-  let currentQuality = 75; // Dynamic quality adjustment
+  let currentQuality = 75; // Dynamic quality adjustments
   
   // Track global frame capture state
   globalFrameCapture.activeStreams.add(`ws-${sessionId}`);
   
   async function captureAndSendFrame() {
     if (!browser || !page || isCapturing) {
+      return;
+    }
+    
+    // Verify this session is still active
+    const currentSession = webrtcSessions.get(sessionId);
+    if (!currentSession || !currentSession.isStreaming) {
+      console.log(`🚫 Skipping frame capture - session ${sessionId} no longer streaming`);
       return;
     }
     
@@ -663,13 +689,15 @@ function startScreenshotStream(ws, sessionId) {
         console.log(`Frame size good (${base64Frame.length} bytes), increasing quality to ${currentQuality}`);
       }
       
-      // Only send if WebSocket is still open
-      if (ws.readyState === ws.OPEN) {
+      // Only send if WebSocket is still open AND session is still active
+      const activeSession = webrtcSessions.get(sessionId);
+      if (ws.readyState === ws.OPEN && activeSession && activeSession.isStreaming) {
         ws.send(JSON.stringify({
           type: 'frame',
           frame: base64Frame,
           timestamp: now,
-          sessionId: sessionId
+          sessionId: sessionId, // Explicit session ID for verification
+          frameId: `${sessionId}-${now}` // Unique frame identifier
         }));
         
         lastFrameTime = now;

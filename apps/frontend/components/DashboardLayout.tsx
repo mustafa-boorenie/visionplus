@@ -6,6 +6,9 @@ import { apiClient } from '@/lib/api-client';
 import { Terminal, Play, Plus, FileCode, MonitorPlay, X, Trash2, RefreshCw } from 'lucide-react';
 import { WebRTCViewer } from './WebRTCViewer';
 import { IntelligentInputProcessor } from './IntelligentInputProcessor';
+import { SessionSequenceBuilder } from './SessionSequenceBuilder';
+import { SequenceExecutor } from './SequenceExecutor';
+import { Sequence } from '@/lib/api-client';
 
 interface SessionLog {
   type: 'command' | 'response' | 'error' | 'info';
@@ -16,14 +19,24 @@ interface SessionLog {
 
 interface DashboardLayoutProps {
   onCreateSession: (startUrl?: string) => void;
+  creatingSession?: boolean;
+  newSessionId?: string | null;
+  onSessionCreated?: (sessionId: string) => void;
 }
 
-export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
+export function DashboardLayout({ 
+  onCreateSession, 
+  creatingSession = false, 
+  newSessionId,
+  onSessionCreated 
+}: DashboardLayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [command, setCommand] = useState('');
   const [sessionLogs, setSessionLogs] = useState<Map<string, SessionLog[]>>(new Map());
   const [showAIProcessor, setShowAIProcessor] = useState(false);
   const [showSequenceBuilder, setShowSequenceBuilder] = useState(false);
+  const [showSequenceExecutor, setShowSequenceExecutor] = useState(false);
+  const [sequenceToExecute, setSequenceToExecute] = useState<Sequence | null>(null);
   const [sessionCounter, setSessionCounter] = useState(1);
   const [sessionNames, setSessionNames] = useState<Map<string, string>>(new Map());
   const logsEndRef = useRef<HTMLDivElement>(null);
@@ -117,7 +130,7 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
       
       // Check if it's a 404 (session already deleted)
       if (error && typeof error === 'object' && 'response' in error && 
-          (error as any).response?.status === 404) {
+          (error as { response?: { status?: number } }).response?.status === 404) {
         // Session was already deleted, treat as success
         addLogToSession(sessionId, {
           type: 'info',
@@ -201,6 +214,16 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
     }
   };
 
+  // Auto-select new session when created
+  useEffect(() => {
+    if (newSessionId && !selectedSessionId) {
+      handleSelectSession(newSessionId);
+      if (onSessionCreated) {
+        onSessionCreated(newSessionId);
+      }
+    }
+  }, [newSessionId, selectedSessionId, onSessionCreated]);
+
   // Load session command history from backend
   const loadSessionHistory = async (sessionId: string) => {
     try {
@@ -266,22 +289,29 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
     if (selectedSessionId) {
       try {
         await apiClient.executeSequence(selectedSessionId, sequenceName);
-        setLogs(prev => [...prev, {
-          type: 'info',
-          text: `Executing sequence: ${sequenceName}`,
-          timestamp: new Date()
-        }]);
+        if (selectedSessionId) {
+          addLogToSession(selectedSessionId, {
+            type: 'info',
+            text: `Executing sequence: ${sequenceName}`,
+            timestamp: new Date(),
+            sessionId: selectedSessionId
+          });
+        }
         refetchSessions();
       } catch (error) {
         console.error('Error executing sequence:', error);
       }
     } else {
-      try {
-        await apiClient.executeSequenceWithNewSession(sequenceName);
-        refetchSessions();
-      } catch (error) {
-        console.error('Error executing sequence with new session:', error);
+      // Find the sequence details first
+      const sequence = sequencesData?.sequences.find(seq => seq.metadata.name === sequenceName);
+      if (!sequence) {
+        console.error('Sequence not found:', sequenceName);
+        return;
       }
+      
+      // Open the sequence executor modal
+      setSequenceToExecute(sequence);
+      setShowSequenceExecutor(true);
     }
   };
 
@@ -321,10 +351,24 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
         <div className="p-4 border-b border-gray-700">
           <button
             onClick={handleNewSession}
-            className="w-full flex items-center gap-3 px-4 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
+            disabled={creatingSession}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+              creatingSession 
+                ? 'bg-blue-600 text-white cursor-not-allowed'
+                : 'bg-green-600 hover:bg-green-700 text-white'
+            }`}
           >
-            <Plus className="w-5 h-5" />
-            New Session
+            {creatingSession ? (
+              <>
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                Creating Session...
+              </>
+            ) : (
+              <>
+                <Plus className="w-5 h-5" />
+                New Session
+              </>
+            )}
           </button>
         </div>
 
@@ -378,6 +422,17 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
               </button>
             </div>
             <div className="space-y-1 max-h-96 overflow-y-auto">
+              {/* Show creating session indicator */}
+              {creatingSession && (
+                <div className="w-full flex items-center gap-2 px-3 py-2 rounded-md bg-blue-600 text-white animate-pulse">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium">Creating New Session...</div>
+                    <div className="text-xs opacity-75">Starting Docker container</div>
+                  </div>
+                </div>
+              )}
+              
               {sessionsData?.sessions.map((sessionItem) => (
                 <div
                   key={sessionItem.id}
@@ -415,7 +470,7 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
                   </button>
                 </div>
               ))}
-              {(!sessionsData?.sessions || sessionsData.sessions.length === 0) && (
+              {(!sessionsData?.sessions || sessionsData.sessions.length === 0) && !creatingSession && (
                 <div className="text-sm text-gray-500 italic py-2">No active sessions</div>
               )}
             </div>
@@ -592,6 +647,49 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
             />
           </div>
         </div>
+      )}
+
+      {/* Session Sequence Builder Modal */}
+      {showSequenceBuilder && selectedSessionId && (
+        <SessionSequenceBuilder
+          sessionId={selectedSessionId}
+          sessionName={getSessionName(selectedSessionId)}
+          onClose={() => setShowSequenceBuilder(false)}
+          onSequenceCreated={(sequenceName) => {
+            if (selectedSessionId) {
+              addLogToSession(selectedSessionId, {
+                type: 'info',
+                text: `✅ Sequence "${sequenceName}" created from session history`,
+                timestamp: new Date(),
+                sessionId: selectedSessionId
+              });
+            }
+            setShowSequenceBuilder(false);
+          }}
+        />
+      )}
+
+      {/* Sequence Executor Modal */}
+      {showSequenceExecutor && sequenceToExecute && (
+        <SequenceExecutor
+          sequence={sequenceToExecute}
+          onClose={() => {
+            setShowSequenceExecutor(false);
+            setSequenceToExecute(null);
+          }}
+          onExecutionStarted={(sessionId) => {
+            console.log(`Sequence execution started in session: ${sessionId}`);
+            refetchSessions();
+            // Auto-select the new session after a brief delay
+            setTimeout(() => {
+              setSelectedSessionId(sessionId);
+            }, 2000);
+          }}
+          onExecutionComplete={(result) => {
+            console.log('Sequence execution completed:', result);
+            refetchSessions();
+          }}
+        />
       )}
     </div>
   );

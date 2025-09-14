@@ -44,13 +44,30 @@ export class DockerService {
    * Build the Docker image if it doesn't exist
    */
   async ensureImage(): Promise<void> {
-    try {
-      await this.docker.getImage(this.imageName).inspect();
-      log.info('Docker image already exists');
+    try {      const image = this.docker.getImage(this.imageName);
+      await image.inspect();
+      log.info(`Docker image '${this.imageName}' found and ready`);
     } catch (error) {
-      log.info('Building Docker image...');
-      // For now, assume the image was built manually
-      throw new Error('Please build the Docker image manually first: docker build -t ai-playwright-browser:latest -f docker/playwright-browser/Dockerfile .');
+      log.error(`Docker image '${this.imageName}' not found:`, error as Error);
+      
+      // Try to find the image with different tag patterns
+      try {
+        const images = await this.docker.listImages();
+        const foundImage = images.find(img => 
+          img.RepoTags?.some(tag => tag.includes('ai-playwright-browser'))
+        );
+        
+        if (foundImage) {
+          log.info(`Found Docker image with different tag: ${foundImage.RepoTags?.[0]}`);
+          // Update the image name to the found one
+          this.imageName = foundImage.RepoTags![0];
+          return;
+        }
+      } catch (listError) {
+        log.error('Failed to list Docker images:', listError as Error);
+      }
+      
+      throw new Error(`Docker image '${this.imageName}' not found. Please build it with: docker build -t ai-playwright-browser:latest -f docker/playwright-browser/Dockerfile .`);
     }
   }
 

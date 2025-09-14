@@ -31,22 +31,48 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
   const initializationRef = useRef(false);
   
   useEffect(() => {
-    // Clean up previous session if sessionId changed
+    // Aggressive cleanup of previous session if sessionId changed
     if (currentSessionRef.current && currentSessionRef.current !== sessionId) {
-      console.log(`Session changed from ${currentSessionRef.current} to ${sessionId}, cleaning up...`);
-      // Force cleanup of previous session
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'stop_stream' }));
+      console.log(`🔄 Session changed from ${currentSessionRef.current} to ${sessionId}, performing aggressive cleanup...`);
+      
+      // Force close WebSocket immediately
+      if (wsRef.current) {
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'stop_stream' }));
+        }
         wsRef.current.close();
+        wsRef.current = null;
       }
-      if (pcRef.current && pcRef.current.signalingState !== 'closed') {
-        pcRef.current.close();
+      
+      // Force close peer connection
+      if (pcRef.current) {
+        if (pcRef.current.signalingState !== 'closed') {
+          pcRef.current.close();
+        }
+        pcRef.current = null;
       }
-      // Reset state for new session
+      
+      // Clear canvas immediately
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          ctx.fillStyle = '#1f2937'; // Dark gray background
+          ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }
+      
+      // Reset all state immediately
       setIsStreaming(false);
       setRemoteControlEnabled(false);
       setConnectionState('booting');
+      setError(null);
+      setIsLoading(true);
+      setReconnectAttempts(0);
+      setRetryDelay(1000);
       initializationRef.current = false;
+      
+      console.log(`✅ Cleanup completed for session ${currentSessionRef.current}`);
     }
     
     // Update current session reference
@@ -162,9 +188,9 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           throw new Error('Docker session not available');
         }
 
-        // Connect via WebSocket for streaming
+        // Connect via WebSocket for streaming with session-specific URL
         const wsUrl = `ws://localhost:${dockerPort}/stream/websocket/${sessionId}`;
-        console.log('Connecting to WebSocket:', wsUrl);
+        console.log(`🔌 Connecting to WebSocket for session ${sessionId}:`, wsUrl);
         
         ws = new WebSocket(wsUrl);
         wsRef.current = ws;
@@ -183,34 +209,51 @@ export function WebRTCViewer({ sessionId, onError }: WebRTCViewerProps) {
           try {
             const data = JSON.parse(event.data);
             
+            // Verify this message is for the current session
+            if (data.sessionId && data.sessionId !== sessionId) {
+              console.warn(`🚫 Ignoring message from wrong session: ${data.sessionId} (current: ${sessionId})`);
+              return;
+            }
+            
             switch (data.type) {
               case 'ready':
-                console.log('Stream ready');
+                console.log(`📡 Stream ready for session ${sessionId}`);
                 setIsLoading(false);
                 setIsStreaming(true);
                 setConnectionState('connected');
                 break;
                 
               case 'frame':
+                // Double-check session ID in frame data
+                if (data.sessionId && data.sessionId !== sessionId) {
+                  console.warn(`🚫 Ignoring frame from session ${data.sessionId}, current session is ${sessionId}`);
+                  return;
+                }
                 
-                // Render frame to canvas
-                if (canvasRef.current && data.frame) {
+                // Render frame to canvas only if it's for the current session
+                if (canvasRef.current && data.frame && currentSessionRef.current === sessionId) {
                   const ctx = canvasRef.current.getContext('2d');
                   if (ctx) {
                     const img = new Image();
                     img.onload = () => {
+                      // Final check before rendering
+                      if (currentSessionRef.current !== sessionId) {
+                        console.warn(`🚫 Session changed during frame load, skipping render`);
+                        return;
+                      }
+                      
                       // Update browser dimensions based on actual image size
                       if (img.naturalWidth && img.naturalHeight) {
                         setBrowserDimensions(prev => {
                           if (prev.width !== img.naturalWidth || prev.height !== img.naturalHeight) {
-                            console.log(`Browser dimensions updated: ${img.naturalWidth}x${img.naturalHeight}`);
+                            console.log(`📐 Browser dimensions updated: ${img.naturalWidth}x${img.naturalHeight}`);
                             return { width: img.naturalWidth, height: img.naturalHeight };
                           }
                           return prev;
                         });
                       }
                       ctx.drawImage(img, 0, 0, canvasRef.current!.width, canvasRef.current!.height);
-                      setLastScreenshot(data.frame); // Store last screenshot
+                      setLastScreenshot(data.frame);
                     };
                     img.onerror = () => {
                       console.warn('Failed to load frame image');

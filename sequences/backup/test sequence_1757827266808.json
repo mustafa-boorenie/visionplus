@@ -1,0 +1,35 @@
+{
+  "metadata": {
+    "id": "ca71e27a-d85a-48e2-bb71-90fb12967925",
+    "name": "test sequence",
+    "description": "Automated sequence from New Session #1 with 1 commands: go to amazon.com",
+    "createdAt": "2025-09-14T05:21:06.803Z",
+    "usageCount": 0,
+    "tags": [
+      "interactive",
+      "session-history"
+    ],
+    "category": "session-generated",
+    "successRate": 100
+  },
+  "originalPrompt": "1. go to amazon.com",
+  "script": {
+    "name": "test sequence",
+    "description": "Automated sequence from New Session #1 with 1 commands: go to amazon.com",
+    "url": "https://www.google.com",
+    "actions": [
+      {
+        "type": "navigate",
+        "url": "https://www.amazon.com/"
+      }
+    ]
+  },
+  "executionHistory": [
+    {
+      "timestamp": "2025-09-14T05:21:06.804Z",
+      "success": true,
+      "executionTime": 26127,
+      "errors": []
+    }
+  ]
+}
