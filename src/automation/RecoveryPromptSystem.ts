@@ -118,7 +118,7 @@ export class RecoveryPromptSystem {
   ): Promise<RecoveryOption | null> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5',
         messages: [
           {
             role: 'system',

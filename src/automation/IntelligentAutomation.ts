@@ -245,7 +245,7 @@ export class IntelligentAutomation {
       );
 
       log.info(`[OPENAI_DEBUG] Making API call to OpenAI...`);
-      log.info(`[OPENAI_DEBUG] Model: gpt-4.1-2025-04-14`);
+      log.info(`[OPENAI_DEBUG] Model: gpt-5`);
       log.info(`[OPENAI_DEBUG] Task: ${this.currentScript.description}`);
       log.info(`[OPENAI_DEBUG] Current URL: ${this.currentScript.url}`);
       log.info(`[OPENAI_DEBUG] API Key present: ${this.openai.apiKey ? 'YES' : 'NO'}`);
@@ -254,7 +254,7 @@ export class IntelligentAutomation {
       let response;
       try {
         response = await this.openai.chat.completions.create({
-          model: 'gpt-4.1-2025-04-14',
+          model: 'gpt-5',
           messages: [
             {
               role: 'system',
@@ -1016,7 +1016,7 @@ try {
         
         // Get code-specific response
         const codeResponse = await this.openai.chat.completions.create({
-          model: 'gpt-4.1-2025-04-14',
+          model: 'gpt-5',
           messages: [
             {
               role: 'system',
@@ -1634,7 +1634,7 @@ Return as JSON:
 
       // Analyze HTML with AI
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4.1-2025-04-14',
+        model: 'gpt-5',
         messages: [
           {
             role: 'system',
@@ -1849,7 +1849,7 @@ Return as JSON:
       ];
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4.1-2025-04-14',
+        model: 'gpt-5',
         messages,
         max_tokens: 4000,
         temperature: 0.3,
@@ -1914,7 +1914,7 @@ Return as JSON:
         .join(', ');
 
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4.1',
+        model: 'gpt-5',
         messages: [
           {
             role: 'system',

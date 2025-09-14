@@ -300,7 +300,7 @@ Generate JavaScript code to:
 Return ONLY a javascript code block.`;
 
           const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-5',
             messages: [
               {
                 role: 'user',
@@ -429,7 +429,7 @@ Return ONLY a javascript code block.`;
       console.log(chalk.cyan('🤖 Getting AI analysis and recovery code...'));
       
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o',
+        model: 'gpt-5',  
         messages: [
           {
             role: 'system',
@@ -617,7 +617,7 @@ Return ONLY a javascript code block.`;
         const codePrompt = OpenAIToolsClient.generateExecutableCodePrompt(failureContext, analysis);
         
         const codeResponse = await openai.chat.completions.create({
-          model: 'gpt-4o',
+          model: 'gpt-5',
           messages: [
             {
               role: 'system',

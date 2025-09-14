@@ -52,8 +52,8 @@ export const apiConfig = {
  */
 export const openAIConfig = {
   apiKey: env.OPENAI_API_KEY,
-  model: 'gpt-4-turbo-preview',
-  visionModel: 'gpt-4-vision-preview',
+  model: 'gpt-5',
+  visionModel: 'gpt-5',
   maxTokens: 4096,
   temperature: 0.3,
   

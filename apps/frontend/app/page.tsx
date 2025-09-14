@@ -11,7 +11,7 @@ export default function Home() {
   // Create session mutation
   const createSessionMutation = useMutation({
     mutationFn: (data: Parameters<typeof apiClient.createSession>[0]) => apiClient.createSession(data),
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] });
     },
     onError: (error) => {

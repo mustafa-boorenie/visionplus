@@ -5,7 +5,7 @@ import { Config } from '../utils/config';
 import { log } from '../utils/logger';
 
 /**
- * Vision analyzer using OpenAI's GPT-4 Vision API
+ * Vision analyzer using OpenAI's GPT-5 Vision API
  */
 export class VisionAnalyzer {
   private openai: OpenAI;
@@ -23,7 +23,7 @@ export class VisionAnalyzer {
   }
 
   /**
-   * Analyze a screenshot using GPT-4 Vision
+   * Analyze a screenshot using GPT-5 Vision
    */
   async analyzeScreenshot(request: VisionAnalysisRequest): Promise<VisionAnalysisResponse> {
     const startTime = Date.now();
@@ -41,7 +41,7 @@ export class VisionAnalyzer {
 
       // Call OpenAI Vision API
       const response = await this.openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-5', 
         messages: [
           {
             role: 'user',

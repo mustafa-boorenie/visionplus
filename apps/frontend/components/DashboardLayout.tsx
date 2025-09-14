@@ -3,9 +3,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
-import { Terminal, Play, Plus, FileCode, Sparkles, MonitorPlay, Camera } from 'lucide-react';
+import { Terminal, Play, Plus, FileCode, MonitorPlay, X, Trash2, RefreshCw } from 'lucide-react';
 import { WebRTCViewer } from './WebRTCViewer';
 import { IntelligentInputProcessor } from './IntelligentInputProcessor';
+
+interface SessionLog {
+  type: 'command' | 'response' | 'error' | 'info';
+  text: string;
+  timestamp: Date;
+  sessionId: string;
+}
 
 interface DashboardLayoutProps {
   onCreateSession: (startUrl?: string) => void;
@@ -14,9 +21,11 @@ interface DashboardLayoutProps {
 export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [command, setCommand] = useState('');
-  const [logs, setLogs] = useState<Array<{ type: 'command' | 'response' | 'error' | 'info'; text: string; timestamp: Date }>>([]);
+  const [sessionLogs, setSessionLogs] = useState<Map<string, SessionLog[]>>(new Map());
   const [showAIProcessor, setShowAIProcessor] = useState(false);
   const [showSequenceBuilder, setShowSequenceBuilder] = useState(false);
+  const [sessionCounter, setSessionCounter] = useState(1);
+  const [sessionNames, setSessionNames] = useState<Map<string, string>>(new Map());
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -46,27 +55,135 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
   const executeCommandMutation = useMutation({
     mutationFn: ({ sessionId, command }: { sessionId: string; command: string }) =>
       apiClient.executeCommand(sessionId, command),
-    onSuccess: () => {
-      setLogs(prev => [...prev, {
+    onSuccess: (data, variables) => {
+      const { sessionId, command } = variables;
+      addLogToSession(sessionId, {
         type: 'response',
-        text: `✓ Command executed successfully`,
-        timestamp: new Date()
-      }]);
+        text: `✓ Command executed: "${command}"`,
+        timestamp: new Date(),
+        sessionId
+      });
       setCommand('');
     },
-    onError: (error: unknown) => {
-      setLogs(prev => [...prev, {
+    onError: (error: unknown, variables) => {
+      const { sessionId, command } = variables;
+      addLogToSession(sessionId, {
         type: 'error',
-        text: `✗ Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: new Date()
-      }]);
+        text: `✗ Error executing "${command}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+        sessionId
+      });
     }
   });
+
+  // Close session mutation
+  const closeSessionMutation = useMutation({
+    mutationFn: (sessionId: string) => apiClient.deleteSession(sessionId),
+    onSuccess: (data, sessionId) => {
+      const sessionName = sessionNames.get(sessionId) || `Session ${sessionId.slice(-8)}`;
+      
+      // Add success log to the session before clearing it
+      addLogToSession(sessionId, {
+        type: 'info',
+        text: `✓ Session "${sessionName}" closed successfully`,
+        timestamp: new Date(),
+        sessionId
+      });
+      
+      // Clear session from local state after a brief delay to show the success message
+      setTimeout(() => {
+        setSessionLogs(prev => {
+          const updated = new Map(prev);
+          updated.delete(sessionId);
+          return updated;
+        });
+        setSessionNames(prev => {
+          const updated = new Map(prev);
+          updated.delete(sessionId);
+          return updated;
+        });
+      }, 1000);
+      
+      // If this was the selected session, clear selection immediately
+      if (selectedSessionId === sessionId) {
+        setSelectedSessionId(null);
+      }
+      
+      // Refresh sessions list
+      refetchSessions();
+    },
+    onError: (error: unknown, sessionId) => {
+      const sessionName = sessionNames.get(sessionId) || `Session ${sessionId.slice(-8)}`;
+      
+      // Check if it's a 404 (session already deleted)
+      if (error && typeof error === 'object' && 'response' in error && 
+          (error as any).response?.status === 404) {
+        // Session was already deleted, treat as success
+        addLogToSession(sessionId, {
+          type: 'info',
+          text: `✓ Session "${sessionName}" was already closed`,
+          timestamp: new Date(),
+          sessionId
+        });
+        
+        // Still clean up local state
+        setTimeout(() => {
+          setSessionLogs(prev => {
+            const updated = new Map(prev);
+            updated.delete(sessionId);
+            return updated;
+          });
+          setSessionNames(prev => {
+            const updated = new Map(prev);
+            updated.delete(sessionId);
+            return updated;
+          });
+        }, 1000);
+        
+        if (selectedSessionId === sessionId) {
+          setSelectedSessionId(null);
+        }
+        refetchSessions();
+      } else {
+        // Real error
+        addLogToSession(sessionId, {
+          type: 'error',
+          text: `✗ Failed to close session "${sessionName}": ${error instanceof Error ? error.message : 'Unknown error'}`,
+          timestamp: new Date(),
+          sessionId
+        });
+      }
+    }
+  });
+
+  // Helper function to add logs to specific session
+  const addLogToSession = (sessionId: string, log: SessionLog) => {
+    setSessionLogs(prev => {
+      const updated = new Map(prev);
+      const sessionLogs = updated.get(sessionId) || [];
+      updated.set(sessionId, [...sessionLogs, log]);
+      return updated;
+    });
+  };
+
+  // Get logs for current session
+  const currentSessionLogs = selectedSessionId ? sessionLogs.get(selectedSessionId) || [] : [];
 
   // Auto-scroll logs
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [logs]);
+  }, [currentSessionLogs]);
+
+  // Generate session name
+  const getSessionName = (sessionId: string) => {
+    if (sessionNames.has(sessionId)) {
+      return sessionNames.get(sessionId)!;
+    }
+    const name = `New Session #${sessionCounter}`;
+    setSessionNames(prev => new Map(prev).set(sessionId, name));
+    setSessionCounter(prev => prev + 1);
+    return name;
+  };
 
   // Handlers
   const handleNewSession = () => {
@@ -76,7 +193,73 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
 
   const handleSelectSession = (sessionId: string) => {
     setSelectedSessionId(sessionId);
-    setLogs([]);
+    // Don't clear logs - they persist per session
+    
+    // Load session console history from backend if not already loaded
+    if (!sessionLogs.has(sessionId)) {
+      loadSessionHistory(sessionId);
+    }
+  };
+
+  // Load session command history from backend
+  const loadSessionHistory = async (sessionId: string) => {
+    try {
+      const history = await apiClient.getCommandHistory(sessionId);
+      const logs: SessionLog[] = history.history.map((item: { command: string; result: { success: boolean; executionTime: number; errors?: string[] }; timestamp: string }) => ([
+        {
+          type: 'command' as const,
+          text: `$ ${item.command}`,
+          timestamp: new Date(item.timestamp),
+          sessionId
+        },
+        {
+          type: item.result.success ? 'response' as const : 'error' as const,
+          text: item.result.success 
+            ? `✓ Command completed (${item.result.executionTime}ms)`
+            : `✗ Command failed: ${item.result.errors?.join(', ') || 'Unknown error'}`,
+          timestamp: new Date(item.timestamp),
+          sessionId
+        }
+      ])).flat();
+      
+      setSessionLogs(prev => new Map(prev).set(sessionId, logs));
+    } catch (error) {
+      console.error('Failed to load session history:', error);
+    }
+  };
+
+  // Handle closing a session
+  const handleCloseSession = async (sessionId: string) => {
+    if (!sessionId) return;
+    
+    const sessionName = getSessionName(sessionId);
+    const confirmed = window.confirm(
+      `Are you sure you want to close "${sessionName}"?\n\nThis will:\n• Stop the Docker container\n• Clear all session data\n• Cannot be undone`
+    );
+    
+    if (confirmed) {
+      addLogToSession(sessionId, {
+        type: 'info',
+        text: `🗑️ Closing session "${sessionName}"...`,
+        timestamp: new Date(),
+        sessionId
+      });
+      
+      closeSessionMutation.mutate(sessionId);
+    }
+  };
+
+  // Handle cleanup of orphaned sessions
+  const handleCleanupOrphanedSessions = async () => {
+    try {
+      const result = await apiClient.clearInactiveSessions();
+      if (result.success && result.cleared > 0) {
+        console.log(`Cleaned up ${result.cleared} orphaned sessions`);
+        refetchSessions(); // Refresh the list
+      }
+    } catch (error) {
+      console.error('Failed to cleanup orphaned sessions:', error);
+    }
   };
 
   const handleExecuteSequence = async (sequenceName: string) => {
@@ -105,11 +288,13 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
   const handleExecuteCommand = () => {
     if (!command.trim() || !selectedSessionId) return;
     
-    setLogs(prev => [...prev, {
+    // Add command to session-specific logs
+    addLogToSession(selectedSessionId, {
       type: 'command',
       text: `$ ${command}`,
-      timestamp: new Date()
-    }]);
+      timestamp: new Date(),
+      sessionId: selectedSessionId
+    });
 
     executeCommandMutation.mutate({ sessionId: selectedSessionId, command });
   };
@@ -182,30 +367,53 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
         {/* Sessions Section */}
         <div className="flex-1 overflow-hidden">
           <div className="p-4">
-            <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">Active Sessions</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Active Sessions</h3>
+              <button
+                onClick={handleCleanupOrphanedSessions}
+                className="p-1 text-gray-400 hover:text-white transition-colors"
+                title="Clean up orphaned sessions"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            </div>
             <div className="space-y-1 max-h-96 overflow-y-auto">
               {sessionsData?.sessions.map((sessionItem) => (
-                <button
+                <div
                   key={sessionItem.id}
-                  onClick={() => handleSelectSession(sessionItem.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2 text-left rounded-md transition-colors ${
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-md transition-colors ${
                     selectedSessionId === sessionItem.id 
                       ? 'bg-green-600 text-white' 
                       : 'text-gray-300 hover:bg-gray-700'
                   }`}
                 >
-                  <MonitorPlay className="w-4 h-4 flex-shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">Session {sessionItem.id.slice(-8)}</div>
-                    <div className="text-xs opacity-75 truncate">
-                      {sessionItem.currentUrl || 'No URL'}
+                  <button
+                    onClick={() => handleSelectSession(sessionItem.id)}
+                    className="flex-1 flex items-center gap-3 text-left"
+                  >
+                    <MonitorPlay className="w-4 h-4 flex-shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium truncate">{getSessionName(sessionItem.id)}</div>
+                      <div className="text-xs opacity-75 truncate">
+                        {sessionItem.currentUrl || 'No URL'}
+                      </div>
                     </div>
-                  </div>
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    sessionItem.status === 'running' ? 'bg-green-400' : 
-                    sessionItem.status === 'error' ? 'bg-red-400' : 'bg-gray-400'
-                  }`} />
-                </button>
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      sessionItem.status === 'running' ? 'bg-green-400' : 
+                      sessionItem.status === 'error' ? 'bg-red-400' : 'bg-gray-400'
+                    }`} />
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleCloseSession(sessionItem.id);
+                    }}
+                    className="p-1 text-gray-400 hover:text-red-400 transition-colors"
+                    title="Close session and stop container"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
               ))}
               {(!sessionsData?.sessions || sessionsData.sessions.length === 0) && (
                 <div className="text-sm text-gray-500 italic py-2">No active sessions</div>
@@ -223,7 +431,7 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
             <div className="bg-gray-800 p-4 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-3">
                 <Terminal className="w-5 h-5 text-green-400" />
-                <h2 className="text-lg font-bold text-white">Session {selectedSessionId.slice(-8)}</h2>
+                <h2 className="text-lg font-bold text-white">{getSessionName(selectedSessionId)}</h2>
                 {sessionDetails && (
                   <span className={`px-2 py-1 text-xs rounded ${
                     sessionDetails.status === 'running' ? 'bg-green-600' : 
@@ -237,11 +445,19 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setShowSequenceBuilder(!showSequenceBuilder)}
-                  className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-blue-700 transition-colors"
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
                   title="Create sequence from command history"
                 >
                   <FileCode className="w-4 h-4" />
                   <span className="text-sm">Build Sequence</span>
+                </button>
+                <button
+                  onClick={() => handleCloseSession(selectedSessionId!)}
+                  className="flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                  title="Close session and stop container"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span className="text-sm">Close Session</span>
                 </button>
               </div>
             </div>
@@ -260,12 +476,12 @@ export function DashboardLayout({ onCreateSession }: DashboardLayoutProps) {
                 
                 {/* Logs */}
                 <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
-                  {logs.length === 0 ? (
+                  {currentSessionLogs.length === 0 ? (
                     <div className="text-gray-500">
                       No commands executed yet. Type a command below to get started.
                     </div>
                   ) : (
-                    logs.map((log, index) => (
+                    currentSessionLogs.map((log, index) => (
                       <div key={index} className={`mb-2 ${
                         log.type === 'command' ? 'text-green-400' : 
                         log.type === 'error' ? 'text-red-400' : 

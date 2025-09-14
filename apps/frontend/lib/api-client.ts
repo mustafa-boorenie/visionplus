@@ -6,7 +6,7 @@ export interface ConsoleLog {
   id: string;
   level: 'info' | 'warn' | 'error' | 'debug' | 'success';
   message: string;
-  data?: any;
+  data?: Record<string, unknown>;
   source?: 'system' | 'automation' | 'browser' | 'user';
   createdAt: Date;
   commandId?: string;
@@ -131,8 +131,17 @@ class ApiClient {
   }
 
   async deleteSession(sessionId: string): Promise<{ success: boolean }> {
-    const response = await this.axiosInstance.delete(`/api/sessions/${sessionId}`);
-    return response.data;
+    try {
+      const response = await this.axiosInstance.delete(`/api/sessions/${sessionId}`);
+      return response.data;
+    } catch (error) {
+      // Handle 404 - session already deleted/doesn't exist
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        console.warn(`Session ${sessionId} not found on server (already deleted)`);
+        return { success: true }; // Treat as success since goal is achieved
+      }
+      throw error; // Re-throw other errors
+    }
   }
 
   async clearInactiveSessions(): Promise<{ cleared: number; success: boolean }> {
