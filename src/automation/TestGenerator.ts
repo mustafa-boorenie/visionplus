@@ -74,7 +74,7 @@ import { chromium, firefox, webkit } from '@playwright/test';`;
     }
 
     // Convert each action to test code
-    this.script.actions.forEach((action, index) => {
+    this.script.actions.forEach((action: BrowserAction, index: number) => {
       const comment = this.getActionComment(action);
       const code = this.actionToCode(action);
       

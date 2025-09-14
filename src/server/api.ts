@@ -234,7 +234,7 @@ export class AutomationAPIServer {
           
           // Create automation instance
           const browser = await this.browserManager.getBrowser();
-          automation = new IntelligentAutomation(browser, rowPrompt, true, false, !!request.sequenceName);
+          automation = new IntelligentAutomation(browser as any, rowPrompt, true, false, !!request.sequenceName);
           
           // Execute
           const result = await automation.execute(request.startUrl || '');
@@ -250,7 +250,7 @@ export class AutomationAPIServer {
       } else {
         // Single execution
         const browser = await this.browserManager.getBrowser();
-        automation = new IntelligentAutomation(browser, taskPrompt, true, false, !!request.sequenceName);
+        automation = new IntelligentAutomation(browser as any, taskPrompt, true, false, !!request.sequenceName);
         
         const result = await automation.execute(request.startUrl || '');
         status.result = result;

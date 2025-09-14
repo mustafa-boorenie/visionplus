@@ -11,12 +11,12 @@ import { log } from '../utils/logger';
 import { AutomationExecutionResult } from '../types';
 import fs from 'fs-extra';
 import axios from 'axios';
-import { DatabaseService } from '../services/database.service';
-import { DockerBrowserService, DockerBrowserSession } from '../services/docker-browser.service';
+import { DatabaseService } from '../integrations/database';
+import { DockerService, DockerBrowserSession } from '../integrations/docker';
 import { RecoveryOption, RecoveryPromptResult, RecoveryPromptSystem } from '../automation/RecoveryPromptSystem';
-import { browserlessService } from '../services/browserless.service';
+import { browserlessService } from '../integrations/cloud';
 import { DockerBrowserAutomation } from '../browser/DockerBrowserAutomation';
-import { ConsoleService } from '../services/console.service';
+import { ConsoleService } from '../integrations/logging';
 import OpenAI from 'openai';
 
 /**
@@ -84,11 +84,12 @@ export class EnhancedAPIServer {
   private feedbackManager: FeedbackManager;
   private rulesEngine: RulesEngine;
   private databaseService: DatabaseService;
-  private dockerBrowserService: DockerBrowserService;
+  private dockerService: DockerService;
   private recoverySystem: RecoveryPromptSystem;
   private consoleService: ConsoleService;
   private cleanupInterval: NodeJS.Timeout | null = null;
   private readonly IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
   
   // WebRTC failure tracking
   private webrtcFailureCount: Map<string, number> = new Map();
@@ -112,7 +113,7 @@ export class EnhancedAPIServer {
     this.feedbackManager = new FeedbackManager();
     this.rulesEngine = new RulesEngine();
     this.databaseService = DatabaseService.getInstance();
-    this.dockerBrowserService = new DockerBrowserService();
+    this.dockerService = new DockerService();
     this.recoverySystem = new RecoveryPromptSystem();
     this.consoleService = ConsoleService.getInstance();
     
@@ -778,10 +779,7 @@ Generate the automation script now:`;
       if (process.env.USE_DOCKER !== 'false') {
         try {
           log.info(`Creating Docker browser session for ${dbSession.id}...`);
-          dockerSession = await this.dockerBrowserService.createBrowserSession({
-            startUrl,
-            headless
-          });
+          dockerSession = await this.dockerService.createBrowserContainer(dbSession.id);
           log.info(`Docker session created successfully for ${dbSession.id}: ${dockerSession.apiUrl}`);
         } catch (error) {
           log.error('Failed to create Docker session:', error as Error);
@@ -910,7 +908,7 @@ Generate the automation script now:`;
         // Take a screenshot after command execution
         let screenshotFilename = null;
         try {
-          const screenshot = await this.dockerBrowserService.takeScreenshot(session.dockerSession);
+          const screenshot = await this.dockerService.takeScreenshot(session.dockerSession);
           screenshotFilename = `${sessionId}_${Date.now()}.png`;
           
           // Save screenshot to filesystem
@@ -968,10 +966,10 @@ Generate the automation script now:`;
           script: {
             name: `command-${dbCommand.id}`,
             description: command,
-            url: await this.dockerBrowserService.getCurrentUrl(session.dockerSession),
+            url: await this.getDockerUrl(session.dockerSession),
             actions: [{ 
               type: 'navigate', // Default to navigate for now, we'll improve this later
-              url: await this.dockerBrowserService.getCurrentUrl(session.dockerSession)
+              url: await this.getDockerUrl(session.dockerSession)
             }]
           },
           executionTime,
@@ -988,7 +986,7 @@ Generate the automation script now:`;
         // Log command result
         if (result.success) {
           await this.consoleService.success(sessionId, `Command completed successfully in ${executionTime}ms`, 
-            { command, executionTime, currentUrl: await this.dockerBrowserService.getCurrentUrl(session.dockerSession) }, 
+            { command, executionTime, currentUrl: await this.getDockerUrl(session.dockerSession) }, 
             dbCommand.id, 'automation');
         } else {
           await this.consoleService.error(sessionId, `Command failed: ${result.error}`, 
@@ -1016,7 +1014,7 @@ Generate the automation script now:`;
         await this.databaseService.updateSession(sessionId, {
           status: 'idle',
           lastActivity: new Date(),
-          currentUrl: await this.dockerBrowserService.getCurrentUrl(session.dockerSession)
+          currentUrl: await this.getDockerUrl(session.dockerSession)
         });
         
         // Broadcast completion
@@ -1085,7 +1083,7 @@ Generate the automation script now:`;
     let currentUrl = dbSession.currentUrl;
     if (memorySession?.dockerSession) {
       try {
-        currentUrl = await this.dockerBrowserService.getCurrentUrl(memorySession.dockerSession);
+        currentUrl = await this.getDockerUrl(memorySession.dockerSession);
       } catch (error) {
         log.warn(`Failed to get current URL from Docker session: ${error}`);
       }
@@ -1133,7 +1131,7 @@ Generate the automation script now:`;
       // Clean up Docker container if exists
       if (session.dockerSession) {
         try {
-          await this.dockerBrowserService.destroySession(session.dockerSession.containerId);
+          await this.dockerService.stopContainer(session.dockerSession.containerId);
           log.info(`Docker container destroyed for session ${sessionId}`);
         } catch (error) {
           log.error(`Failed to destroy Docker container for session ${sessionId}:`, error as Error);
@@ -1680,7 +1678,7 @@ Generate the automation script now:`;
       }
 
       // Check both Docker container status and health endpoint
-      const containerHealthy = await this.dockerBrowserService.checkDockerHealth(session.dockerSession.containerId);
+      const containerHealthy = await this.dockerService.getContainerHealth(session.dockerSession);
       
       if (!containerHealthy) {
         return reply.send({
@@ -2189,7 +2187,7 @@ Generate the automation script now:`;
   ): Promise<{ success: boolean; error?: string }> {
     try {
       log.info(`[COMMAND_DEBUG] Starting IntelligentAutomation for command: ${command}`);
-      const currentUrl = await this.dockerBrowserService.getCurrentUrl(dockerSession);
+      const currentUrl = await this.getDockerUrl(dockerSession);
       log.info(`[COMMAND_DEBUG] Current URL: ${currentUrl}`);
       
       // Create IntelligentAutomation instance
@@ -2240,7 +2238,7 @@ Generate the automation script now:`;
         // The step already has an 'action' property with the browser action
         if (step.action) {
           log.info(`[COMMAND_DEBUG] Executing action: ${JSON.stringify(step.action)}`);
-          await this.dockerBrowserService.executeAction(dockerSession, step.action);
+          await this.dockerService.executeAction(dockerSession, step.action);
         }
       }
       
@@ -2301,7 +2299,7 @@ Generate the automation script now:`;
             url = 'https://' + url;
           }
           
-          await this.dockerBrowserService.executeAction(dockerSession, {
+          await this.dockerService.executeAction(dockerSession, {
             type: 'navigate',
             url: url
           });
@@ -2356,7 +2354,7 @@ Generate the automation script now:`;
    */
   async stop(): Promise<void> {
     // Clean up all Docker containers
-    await this.dockerBrowserService.cleanupAllSessions();
+    await this.dockerService.cleanupOrphanedContainers();
     
     // Close all sessions
     for (const session of this.sessions.values()) {
@@ -2367,5 +2365,18 @@ Generate the automation script now:`;
     
     await this.server.close();
     log.info('API server stopped');
+  }
+
+  /**
+   * Get current URL from Docker session
+   */
+  private async getDockerUrl(session: DockerBrowserSession): Promise<string> {
+    try {
+      const response = await axios.get(`${session.apiUrl}/url`, { timeout: 5000 });
+      return response.data.url || '';
+    } catch (error) {
+      log.error('Failed to get Docker URL', error as Error);
+      return '';
+    }
   }
 } 

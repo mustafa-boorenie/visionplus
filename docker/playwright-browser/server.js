@@ -53,6 +53,7 @@ async function findWorkingSelector(page, selectors) {
 app.use(express.json({ limit: '10mb' }));
 
 let browser = null;
+let context = null;
 let page = null;
 
 // WebRTC sessions - each session gets its own WebSocket and streaming
@@ -84,11 +85,41 @@ async function initBrowser() {
   console.log(`Initializing browser with options: { headless: ${headless}, startUrl: '${startUrl}' }`);
   
   try {
+    const launchArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-blink-features=AutomationControlled',
+      '--no-default-browser-check',
+      '--disable-features=IsolateOrigins,site-per-process',
+      '--disable-dev-shm-usage'
+    ];
     browser = await chromium.launch({ 
       headless,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: launchArgs
     });
-    page = await browser.newPage();
+    context = await browser.newContext({
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      locale: process.env.LOCALE || 'en-US',
+      timezoneId: process.env.TIMEZONE || 'America/Los_Angeles',
+      ignoreHTTPSErrors: true
+    });
+    // Stealth-like init scripts
+    await context.addInitScript(`
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+      Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+      // @ts-ignore
+      window.chrome = { runtime: {} };
+      const originalQuery = navigator.permissions && navigator.permissions.query;
+      if (originalQuery) {
+        navigator.permissions.query = (parameters) => (
+          parameters && parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
+      }
+    `);
+    page = await context.newPage();
     
     if (startUrl && startUrl !== 'about:blank') {
       await page.goto(startUrl);
@@ -102,9 +133,37 @@ async function initBrowser() {
       console.log('Retrying with headless mode...');
       browser = await chromium.launch({ 
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-blink-features=AutomationControlled',
+          '--no-default-browser-check',
+          '--disable-features=IsolateOrigins,site-per-process',
+          '--disable-dev-shm-usage'
+        ]
       });
-      page = await browser.newPage();
+      context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        locale: process.env.LOCALE || 'en-US',
+        timezoneId: process.env.TIMEZONE || 'America/Los_Angeles',
+        ignoreHTTPSErrors: true
+      });
+      await context.addInitScript(`
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+        // @ts-ignore
+        window.chrome = { runtime: {} };
+        const originalQuery = navigator.permissions && navigator.permissions.query;
+        if (originalQuery) {
+          navigator.permissions.query = (parameters) => (
+            parameters && parameters.name === 'notifications' ?
+              Promise.resolve({ state: Notification.permission }) :
+              originalQuery(parameters)
+          );
+        }
+      `);
+      page = await context.newPage();
       if (startUrl && startUrl !== 'about:blank') {
         await page.goto(startUrl);
       }
@@ -144,11 +203,29 @@ app.post('/execute', async (req, res) => {
 
             case 'click':
               const clickSelector = await findWorkingSelector(page, action.selector);
+              try {
+                const box = await page.locator(clickSelector).first().boundingBox();
+                if (box) {
+                  const cx = box.x + box.width / 2;
+                  const cy = box.y + box.height / 2;
+                  await page.mouse.move(cx, cy, { steps: 12 });
+                  await page.waitForTimeout(40);
+                }
+              } catch {}
               await page.click(clickSelector);
               result = { clicked: true };
               break;
             case 'type':
               const typeSelector = await findWorkingSelector(page, action.selector);
+              try {
+                const ibox = await page.locator(typeSelector).first().boundingBox();
+                if (ibox) {
+                  const ix = ibox.x + Math.min(ibox.width - 4, 8);
+                  const iy = ibox.y + Math.min(ibox.height - 4, 8);
+                  await page.mouse.move(ix, iy, { steps: 10 });
+                  await page.waitForTimeout(30);
+                }
+              } catch {}
               await page.fill(typeSelector, action.text);
               result = { typed: true };
               break;
@@ -528,7 +605,9 @@ function startScreenshotStream(ws, sessionId) {
   const FRAME_RATE = 12; // Reduced to 12 FPS for better stability
   const FRAME_INTERVAL = 1000 / FRAME_RATE; // ~67ms between frames
   const TYPING_DEBOUNCE = 150; // Wait 150ms after typing before capturing
-  const MAX_FRAME_SIZE = 100 * 1024; // 100KB max frame size
+  const MAX_FRAME_SIZE = 250 * 1024; // 250KB max frame size (increased)
+  const TARGET_FRAME_SIZE = 150 * 1024; // 150KB target size
+  let currentQuality = 75; // Dynamic quality adjustment
   
   // Track global frame capture state
   globalFrameCapture.activeStreams.add(`ws-${sessionId}`);
@@ -561,20 +640,27 @@ function startScreenshotStream(ws, sessionId) {
     isCapturing = true;
     
     try {
-      // Use viewport-only capture for better performance
+      // Use viewport-only capture with dynamic quality
       const screenshot = await page.screenshot({ 
         type: 'jpeg', 
-        quality: 75, // Slightly better quality 
-        clip: await page.viewportSize(), // Only capture viewport, not full page
-        timeout: 2000 // Shorter timeout since we're only capturing viewport
+        quality: currentQuality,
+        fullPage: false,
+        timeout: 2000
       });
       
       const base64Frame = screenshot.toString('base64');
       
-      // Check frame size and skip if too large
+      // Dynamic quality adjustment based on frame size
       if (base64Frame.length > MAX_FRAME_SIZE) {
-        console.warn(`Frame too large (${base64Frame.length} bytes), skipping`);
-        return;
+        console.warn(`Frame too large (${base64Frame.length} bytes), reducing quality from ${currentQuality} to ${Math.max(30, currentQuality - 10)}`);
+        currentQuality = Math.max(30, currentQuality - 10); // Reduce quality but not below 30
+        return; // Skip this frame, next one will use lower quality
+      }
+      
+      // If frame is much smaller than target, we can increase quality
+      if (base64Frame.length < TARGET_FRAME_SIZE * 0.7 && currentQuality < 85) {
+        currentQuality = Math.min(85, currentQuality + 5); // Gradually increase quality
+        console.log(`Frame size good (${base64Frame.length} bytes), increasing quality to ${currentQuality}`);
       }
       
       // Only send if WebSocket is still open
@@ -712,9 +798,8 @@ process.on('SIGTERM', async () => {
   });
   
   // Close browser
-  if (browser) {
-    await browser.close();
-  }
+  if (context) { await context.close(); }
+  if (browser) { await browser.close(); }
   
   process.exit(0);
 });

@@ -21,7 +21,8 @@ import {
   SwitchTabAction,
   CloseTabAction
 } from '../types';
-import { Config } from '../utils/config';
+import { env } from '../config/environment';
+import { defaultBrowserConfig } from '../config/browser.config';
 import { log } from '../utils/logger';
 
 /**
@@ -35,7 +36,7 @@ export class BrowserAutomation implements IBrowserAutomation {
   private screenshotCount = 0;
 
   constructor(config?: Partial<BrowserConfig>) {
-    this.config = { ...Config.BROWSER_CONFIG, ...config };
+    this.config = { ...defaultBrowserConfig, ...config };
   }
 
   /**
@@ -54,20 +55,27 @@ export class BrowserAutomation implements IBrowserAutomation {
       
       // Launch browser based on type
       const browserType = this.getBrowserType();
+      const launchArgs = [
+        ...(this.config.args || []),
+        '--disable-blink-features=AutomationControlled',
+        '--no-default-browser-check',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-dev-shm-usage'
+      ];
       this.browser = await browserType.launch({
         headless: this.config.headless,
-        args: [
-          ...(this.config.args || []),
-          '--disable-blink-features=AutomationControlled'
-        ]
+        args: launchArgs
       });
 
       // Create context with viewport and anti-detection settings
-      this.context = await this.browser.newContext({
+      const contextOptions: Parameters<typeof this.browser.newContext>[0] = {
         viewport: this.config.viewport,
         ignoreHTTPSErrors: true,
-        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      });
+        userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        locale: this.config.locale || 'en-US',
+        timezoneId: this.config.timezoneId || 'America/Los_Angeles'
+      };
+      this.context = await this.browser.newContext(contextOptions);
 
       // Set default timeouts
       this.context.setDefaultTimeout(this.config.timeout);
@@ -76,8 +84,13 @@ export class BrowserAutomation implements IBrowserAutomation {
       // Create new page
       this.page = await this.context.newPage();
       
-      // Inject anti-detection scripts
-      await this.injectAntiDetection();
+      // Inject stealth/anti-detection scripts and set up humanization
+      if (this.config.stealth !== false) {
+        await this.injectAntiDetection();
+      }
+      if (this.config.humanize) {
+        await this.installHumanizedCursor();
+      }
       
       log.info(`Browser initialized: ${this.config.browserType}`);
     } catch (error) {
@@ -99,6 +112,67 @@ export class BrowserAutomation implements IBrowserAutomation {
         get: () => undefined
       });
     `);
+
+    // Plugins length spoofing
+    await this.context.addInitScript(() => {
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+      });
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-US', 'en']
+      });
+    });
+
+    // Chrome runtime spoof
+    await this.context.addInitScript(() => {
+      // @ts-ignore
+      window.chrome = { runtime: {} };
+    });
+
+    // Permissions query interception for notifications
+    await this.context.addInitScript(() => {
+      const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
+      if (originalQuery) {
+        window.navigator.permissions.query = ((parameters: any) => {
+          if (parameters && parameters.name === 'notifications') {
+            return Promise.resolve(({
+              state: Notification.permission
+            }) as unknown as PermissionStatus);
+          }
+          return originalQuery(parameters as PermissionDescriptor);
+        }) as unknown as typeof originalQuery;
+      }
+    });
+  }
+
+  /**
+   * Install a human-like cursor overlay and movement helpers
+   */
+  private async installHumanizedCursor(): Promise<void> {
+    if (!this.page) return;
+
+    // Cursor overlay (optional)
+    if (this.config.cursorOverlay) {
+      await this.page.addInitScript(() => {
+        const style = document.createElement('style');
+        style.textContent = `
+          .__ai_cursor__ { position: fixed; top: 0; left: 0; width: 16px; height: 16px; border-radius: 50%; background: rgba(0,0,0,0.5); pointer-events: none; z-index: 2147483647; transform: translate(-50%, -50%); }
+        `;
+        document.documentElement.appendChild(style);
+        const cursor = document.createElement('div');
+        cursor.className = '__ai_cursor__';
+        document.body.appendChild(cursor);
+        // Expose to window for movement
+        // @ts-ignore
+        window.__ai_cursor_el__ = cursor;
+      });
+    }
+
+    // Expose a function to move cursor in small human-like steps
+    await this.page.exposeFunction('__ai_move_cursor__', async (x: number, y: number) => {
+      // noop in Node context; real movement occurs via page.mouse in caller
+      return true;
+    });
   }
 
   /**
@@ -350,6 +424,13 @@ export class BrowserAutomation implements IBrowserAutomation {
     
     // Use smart locator to find element
     const locator = await this.smartLocator(action.selector, elementType);
+    // Move mouse to element center with human-like small steps before clicking
+    const box = await locator.boundingBox();
+    if (box && this.page) {
+      const targetX = box.x + box.width / 2;
+      const targetY = box.y + box.height / 2;
+      await this.humanMouseMove(targetX, targetY);
+    }
     await locator.click(action.options);
   }
 
@@ -361,9 +442,51 @@ export class BrowserAutomation implements IBrowserAutomation {
     
     // Use smart locator to find element, with 'search' hint for better fallback
     const locator = await this.smartLocator(action.selector, 'search');
+    // Move cursor to input before typing
+    const box = await locator.boundingBox();
+    if (box && this.page) {
+      const targetX = box.x + Math.min(box.width - 4, 8);
+      const targetY = box.y + Math.min(box.height - 4, 8);
+      await this.humanMouseMove(targetX, targetY);
+    }
     
     // Clear existing text and type new text
     await locator.fill(action.text);
+  }
+
+  /**
+   * Human-like mouse move with jitter and segmented motion
+   */
+  private async humanMouseMove(x: number, y: number): Promise<void> {
+    if (!this.page) return;
+    try {
+      const startX = 0;
+      const startY = 0;
+      const dx = x - startX;
+      const dy = y - startY;
+      const distance = Math.hypot(dx, dy);
+      const steps = Math.max(8, Math.min(25, Math.round(distance / 20)));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+        const jitterX = (Math.random() - 0.5) * 2;
+        const jitterY = (Math.random() - 0.5) * 2;
+        const nx = startX + dx * ease + jitterX;
+        const ny = startY + dy * ease + jitterY;
+        await this.page.mouse.move(nx, ny, { steps: 1 });
+        await this.page.waitForTimeout(5 + Math.floor(Math.random() * 10));
+      }
+      // Update overlay if present
+      if (this.config.cursorOverlay) {
+        await this.page.evaluate(([cx, cy]) => {
+          // @ts-ignore
+          const el = window.__ai_cursor_el__ as HTMLElement | undefined;
+          if (el) {
+            el.style.transform = `translate(${cx}px, ${cy}px)`;
+          }
+        }, [x, y]);
+      }
+    } catch {}
   }
 
   /**
@@ -620,12 +743,13 @@ export class BrowserAutomation implements IBrowserAutomation {
     }
 
     // Ensure screenshot directory exists
-    await fs.ensureDir(Config.SCREENSHOT_PATH);
+    const screenshotPath = this.config.screenshotPath || './screenshots';
+    await fs.ensureDir(screenshotPath);
 
     // Generate filename
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const filename = `${name}_${timestamp}.${options?.type || 'png'}`;
-    const filepath = path.join(Config.SCREENSHOT_PATH, filename);
+    const filepath = path.join(screenshotPath, filename);
 
     log.action(`Taking screenshot: ${filename}`);
 
@@ -633,7 +757,7 @@ export class BrowserAutomation implements IBrowserAutomation {
     await this.page.screenshot({
       path: filepath,
       fullPage: options?.fullPage ?? true,
-      quality: options?.type === 'jpeg' ? (options.quality || Config.SCREENSHOT_QUALITY) : undefined,
+      quality: options?.type === 'jpeg' ? (options.quality || 80) : undefined,
       type: options?.type || 'png'
     });
 

@@ -3,7 +3,7 @@ import OpenAI from 'openai';
 import path from 'path';
 import fs from 'fs-extra';
 import { DocumentChunk, DocumentProcessor } from './DocumentProcessor';
-import { Config } from '../utils/config';
+import { env } from '../config/environment';
 import { log } from '../utils/logger';
 
 /**
@@ -25,7 +25,7 @@ export class VectorStore {
   private isInitialized = false;
 
   constructor() {
-    this.openai = new OpenAI({ apiKey: Config.OPENAI_API_KEY });
+    this.openai = new OpenAI({ apiKey: env.OPENAI_API_KEY });
     this.processor = new DocumentProcessor();
     this.indexPath = path.join(process.cwd(), '.vectra-index');
   }

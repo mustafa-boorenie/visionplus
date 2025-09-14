@@ -1,20 +1,21 @@
 import { IBrowserAutomation } from './IBrowserAutomation';
 import { BrowserAction, ScreenshotOptions } from '../types';
-import { DockerBrowserService, DockerBrowserSession } from '../services/docker-browser.service';
+import { DockerService, DockerBrowserSession } from '../integrations/docker';
 import { log } from '../utils/logger';
 import fs from 'fs-extra';
 import path from 'path';
+import axios from 'axios';
 
 /**
  * Docker-based browser automation that implements IBrowserAutomation
  */
 export class DockerBrowserAutomation implements IBrowserAutomation {
-  private dockerService: DockerBrowserService;
+  private dockerService: DockerService;
   private session?: DockerBrowserSession;
   private screenshotDir: string = './screenshots';
 
   constructor() {
-    this.dockerService = new DockerBrowserService();
+    this.dockerService = new DockerService();
   }
 
   /**
@@ -26,10 +27,7 @@ export class DockerBrowserAutomation implements IBrowserAutomation {
       await fs.ensureDir(this.screenshotDir);
       
       // Create Docker browser session
-      this.session = await this.dockerService.createBrowserSession({
-        startUrl: 'about:blank',
-        headless: false
-      });
+      this.session = await this.dockerService.createBrowserContainer('default-session');
       
       log.info(`Docker browser session initialized: ${this.session.containerId}`);
     } catch (error) {
@@ -44,7 +42,7 @@ export class DockerBrowserAutomation implements IBrowserAutomation {
   async close(): Promise<void> {
     if (this.session) {
       try {
-        await this.dockerService.destroySession(this.session.containerId);
+        await this.dockerService.stopContainer(this.session.containerId);
         log.info(`Docker browser session closed: ${this.session.containerId}`);
         this.session = undefined;
       } catch (error) {
@@ -115,10 +113,10 @@ export class DockerBrowserAutomation implements IBrowserAutomation {
       const filepath = path.join(this.screenshotDir, filename);
 
       // Take screenshot from Docker container (returns base64)
-      const base64Screenshot = await this.dockerService.takeScreenshot(this.session, name, options);
+      const base64Screenshot = await this.dockerService.takeScreenshot(this.session, name);
       
       // Save to local file
-      const buffer = Buffer.from(base64Screenshot, 'base64');
+      const buffer = Buffer.isBuffer(base64Screenshot) ? base64Screenshot : Buffer.from(base64Screenshot as any, 'base64');
       await fs.writeFile(filepath, buffer);
       
       log.info(`Screenshot saved: ${filepath}`);
@@ -138,7 +136,8 @@ export class DockerBrowserAutomation implements IBrowserAutomation {
     }
 
     try {
-      return await this.dockerService.getCurrentUrl(this.session);
+      const response = await axios.get(`${this.session.apiUrl}/url`, { timeout: 5000 });
+      return response.data.url || '';
     } catch (error) {
       log.error('Failed to get current URL', error as Error);
       return 'about:blank';
@@ -200,5 +199,12 @@ export class DockerBrowserAutomation implements IBrowserAutomation {
       screenshot: (options: any) => this.takeScreenshot('current', options),
       content: () => this.getPageHTML()
     } : null;
+  }
+
+  /**
+   * Check if Docker-backed automation session is active
+   */
+  isConnected(): boolean {
+    return !!this.session && typeof this.session.containerId === 'string' && this.session.containerId.length > 0;
   }
 } 

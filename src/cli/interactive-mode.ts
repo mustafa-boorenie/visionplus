@@ -957,7 +957,7 @@ Return ONLY a javascript code block.`;
         screenshots: combinedScreenshots,
         errors: [],
         stepResults: successfulCommands.flatMap((cmd, cmdIndex) => 
-          cmd.result.stepResults?.map(step => ({
+          cmd.result.stepResults?.map((step: { step: string; success: boolean; error?: string; duration: number }) => ({
             ...step,
             step: `[Cmd ${cmdIndex + 1}] ${step.step}`
           })) || []
@@ -1131,7 +1131,7 @@ Return ONLY a javascript code block.`;
       );
 
       // Count commands in updated sequence
-      const commandCount = updatedSequence.originalPrompt.split('\n').filter(line => line.trim()).length;
+      const commandCount = updatedSequence.originalPrompt.split('\n').filter((line: string) => line.trim()).length;
 
       console.log(chalk.green(`✅ Successfully appended to sequence "${sequenceName}"!`));
       console.log(chalk.gray(`   Added command: ${this.lastPrompt}`));

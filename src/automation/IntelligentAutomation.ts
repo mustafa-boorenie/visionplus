@@ -1,19 +1,20 @@
-import { BrowserAutomation } from '../browser/BrowserAutomation';
+import { LocalBrowser } from '../core/browser/implementations/LocalBrowser';
 import { BrowserManager } from '../browser/BrowserManager';
-import { VisionAnalyzer } from '../vision/VisionAnalyzer';
-import { AutomationScript, BrowserAction, AutomationExecutionResult } from '../types';
+import { BrowserAutomation } from '../browser/BrowserAutomation';
+import { VisionAnalyzer } from '../core/vision';
+import { AutomationScript, BrowserAction, AutomationExecutionResult, IBrowserAutomation } from '../types';
 import { log } from '../utils/logger';
 import { ProgressTracker } from '../utils/ProgressTracker';
 import { TestGenerator } from './TestGenerator';
 import { VectorStore } from '../rag/VectorStore';
 import OpenAI from 'openai';
-import { Config } from '../utils/config';
+import { env } from '../config/environment';
 import fs from 'fs-extra';
 import path from 'path';
 import chalk from 'chalk';
 import { SelectorSuggester } from './SelectorSuggester';
 import { RecoveryPromptSystem } from './RecoveryPromptSystem';
-import { IBrowserAutomation } from '../types';
+// IBrowserAutomation already imported above
 import { FeedbackManager } from '../feedback/FeedbackManager';
 import { RulesEngine } from '../feedback/RulesEngine';
 import readline from 'readline';
@@ -67,7 +68,7 @@ export class IntelligentAutomation {
     onScreenshotCapture?: (filepath: string) => void,
     onRecoveryNeeded?: (context: any, options: any[]) => Promise<any>
   ) {
-    const apiKey = Config.OPENAI_API_KEY;
+    const apiKey = env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error("OPENAI_API_KEY is not set in the environment variables.");
     }
@@ -1475,6 +1476,22 @@ Return as JSON:
         temperature: 0.2 // Very low temperature for accuracy
       });
 
+      // First attempt token-based solve via Anti-Captcha if available
+      try {
+        const { CaptchaSolver } = await import('../core/captcha');
+        const solver = new CaptchaSolver();
+        const tokenSolved = await solver.solveAndInject(this.browser);
+        if (tokenSolved) {
+          log.info('[CAPTCHA] Token-based solution injected, waiting before continue');
+          await this.browser.executeAction({ type: 'wait', duration: 2000 });
+          await this.executeStepsRecursively(stepIndex + 1);
+          return;
+        }
+      } catch (svcErr) {
+        log.warn('[CAPTCHA] Token-based solving unavailable or failed, falling back to Vision');
+        log.error('[CAPTCHA] Token-based solver error', svcErr as Error);
+      }
+
       // Parse CAPTCHA solution
       let captchaSolution;
       try {
@@ -1485,7 +1502,7 @@ Return as JSON:
         throw new Error('Could not analyze CAPTCHA');
       }
 
-      // Execute CAPTCHA solving steps
+      // Execute CAPTCHA solving steps with recursive refinement if needed
       if (captchaSolution.solvingSteps && captchaSolution.confidence > 0.5) {
         log.info(`[CAPTCHA] Attempting to solve ${captchaSolution.captchaType} CAPTCHA with confidence ${captchaSolution.confidence}`);
         
@@ -1537,6 +1554,44 @@ Return as JSON:
         this.screenshots.push(verifyScreenshot);
         
         log.info('[CAPTCHA] CAPTCHA solving attempt completed');
+
+        // Recursive refinement: if a captcha checkbox or error still visible, re-analyze up to 2 more times
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const htmlAfter = await this.browser.getPageHTML();
+          const stillHasCaptcha = /captcha|hcaptcha|recaptcha|try again|incorrect/i.test(htmlAfter);
+          if (!stillHasCaptcha) break;
+          log.info(`[CAPTCHA] Possible remaining challenge detected, re-analyzing (attempt ${attempt + 1}/2)...`);
+          const retryShot = await this.browser.takeHighQualityScreenshot(`captcha_retry_${stepIndex}_${attempt}`);
+          const reanalysis = await this.vision.analyzeScreenshot({
+            screenshotPath: retryShot,
+            prompt: `We attempted the CAPTCHA but it may still be present. Provide only JSON with refined solvingSteps and confidence. HTML excerpt:\n${htmlAfter.slice(0, 12000)}`,
+            maxTokens: 1000,
+            temperature: 0.2
+          });
+          try {
+            const refined = JSON.parse(reanalysis.content);
+            if (refined.solvingSteps && refined.solvingSteps.length > 0 && (refined.confidence ?? 0) >= 0.4) {
+              for (const step of refined.solvingSteps) {
+                try {
+                  let action: BrowserAction;
+                  switch (step.action) {
+                    case 'type':
+                      action = { type: 'type', selector: step.target, text: step.value || refined.solution || '' };
+                      break;
+                    case 'click':
+                      action = { type: 'click', selector: step.target };
+                      break;
+                    default:
+                      continue;
+                  }
+                  await this.browser.executeAction(action);
+                  await this.browser.executeAction({ type: 'wait', duration: 500 });
+                } catch {}
+              }
+              await this.browser.executeAction({ type: 'wait', duration: 1500 });
+            }
+          } catch {}
+        }
       } else {
         log.warn(`[CAPTCHA] Low confidence (${captchaSolution.confidence}) or no solving steps available`);
       }

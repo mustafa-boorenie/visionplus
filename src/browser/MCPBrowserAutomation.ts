@@ -476,6 +476,13 @@ export class MCPBrowserAutomation implements IBrowserAutomation {
   }
 
   /**
+   * Check if MCP-backed browser is connected
+   */
+  isConnected(): boolean {
+    return this.isInitialized === true;
+  }
+
+  /**
    * Debug page blockers
    */
   async debugPageBlockers(): Promise<any> {

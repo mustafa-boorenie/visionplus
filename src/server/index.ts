@@ -1,9 +1,6 @@
-import { AutomationAPIServer } from './api';
+import { EnhancedAPIServer } from './api-v2';
 import { log } from '../utils/logger';
-import dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
+import { env } from '../config/environment';
 
 /**
  * Server configuration
@@ -32,14 +29,14 @@ interface ServerConfig {
  * Default configuration
  */
 const defaultConfig: ServerConfig = {
-  port: parseInt(process.env.PORT || '3000'),
-  host: process.env.HOST || '0.0.0.0',
+  port: env.PORT,
+  host: '0.0.0.0',
   cors: {
-    origin: process.env.CORS_ORIGIN || true,
+    origin: true,
     credentials: true
   },
   deployment: {
-    mode: (process.env.NODE_ENV as 'development' | 'production') || 'development'
+    mode: env.NODE_ENV as 'development' | 'production'
   }
 };
 
@@ -52,7 +49,7 @@ async function startServer(): Promise<void> {
     log.info(`Environment: ${defaultConfig.deployment.mode}`);
     
     // Create server instance
-    const server = new AutomationAPIServer(defaultConfig.port);
+    const server = new EnhancedAPIServer(defaultConfig.port);
     
     // Initialize server
     await server.initialize();

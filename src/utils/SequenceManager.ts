@@ -157,7 +157,7 @@ export class SequenceManager {
 
       // Calculate new success rate
       const totalExecutions = sequence.executionHistory.length + 1;
-      const successfulExecutions = sequence.executionHistory.filter(h => h.success).length + 
+      const successfulExecutions = sequence.executionHistory.filter((h: { success: boolean }) => h.success).length + 
                                   (executionResult.success ? 1 : 0);
       sequence.metadata.successRate = Math.round((successfulExecutions / totalExecutions) * 100);
 
@@ -376,7 +376,7 @@ export class SequenceManager {
 
     // Fix execution history dates
     if (sequence.executionHistory && Array.isArray(sequence.executionHistory)) {
-      sequence.executionHistory = sequence.executionHistory.map(history => ({
+      sequence.executionHistory = sequence.executionHistory.map((history: { timestamp: Date; success: boolean; executionTime: number; errors?: string[] }) => ({
         ...history,
         timestamp: typeof history.timestamp === 'string' ? new Date(history.timestamp) : history.timestamp
       }));
@@ -451,7 +451,7 @@ export class SequenceManager {
       }
 
       // Count current commands (split by newlines and filter empty)
-      const currentCommands = existingSequence.originalPrompt.split('\n').filter(line => line.trim());
+      const currentCommands = existingSequence.originalPrompt.split('\n').filter((line: string) => line.trim());
       const commandNumber = currentCommands.length + 1;
 
       // Append to the original prompt
@@ -558,7 +558,7 @@ export class SequenceManager {
     
     // Check all actions in the script
     if (sequence.script && sequence.script.actions) {
-      sequence.script.actions.forEach(action => {
+      sequence.script.actions.forEach((action: any) => {
         checkActionForPlaceholders(action);
       });
     }

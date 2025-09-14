@@ -1,5 +1,5 @@
-import { MediaLayerService } from '../services/media-layer.service';
-import { DatabaseService } from '../services/database.service';
+import { MediaLayerService } from '../integrations/media/MediaLayerService';
+import { DatabaseService } from '../integrations/database/DatabaseService';
 import { log } from '../utils/logger';
 
 async function startMediaLayerServer() {
