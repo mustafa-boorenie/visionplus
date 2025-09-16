@@ -1,0 +1,26 @@
+{
+  "name": "threejs-scroll-animation",
+  "version": "1.0.0",
+  "description": "Three.js object animated with GSAP based on scroll position",
+  "main": "app.js",
+  "scripts": {
+    "start": "npx http-server -p 8080 -c-1",
+    "dev": "npx http-server -p 8080 -c-1 -o"
+  },
+  "keywords": [
+    "threejs",
+    "gsap",
+    "scroll-animation",
+    "3d",
+    "webgl"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "three": "^0.160.0",
+    "gsap": "^3.12.4"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}
